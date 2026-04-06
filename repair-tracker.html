@@ -1,0 +1,1282 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Repair Tracker</title>
+
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+    <script src="https://cdn.jsdelivr.net/gh/alpinejs/alpine@v2.8.0/dist/alpine.min.js" defer></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@500;700;800&display=swap" rel="stylesheet">
+
+    <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: { sans: ['Inter', 'sans-serif'], mono: ['JetBrains Mono', 'monospace'] },
+                    colors: {
+                        c_intake: '#a855f7', c_ready: '#06b6d4', c_parts: '#f97316',
+                        c_shop: '#3b82f6', c_done: '#10b981', c_road: '#8b5cf6'
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        .scrollbar-hide::-webkit-scrollbar { display: none; }
+        .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+        [x-cloak] { display: none !important; }
+
+        /* Custom Scrollbar — matches Budget Portal */
+        .custom-scroll::-webkit-scrollbar { width: 4px; height: 4px; }
+        .custom-scroll::-webkit-scrollbar-track { background: transparent; }
+        .custom-scroll::-webkit-scrollbar-thumb { background: #e5e7eb; border-radius: 4px; }
+        .custom-scroll:hover::-webkit-scrollbar-thumb { background: #9ca3af; }
+
+        /* Kanban */
+        .kanban-board { touch-action: pan-y; }
+        .vehicle-card { transition: all 0.1s ease-in-out; animation: cardIn 0.3s ease both; }
+        @keyframes cardIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+        .vehicle-card:active { transform: scale(0.99); background-color: #f9fafb; }
+        .vehicle-card.dragging { opacity: 0.4; transform: scale(0.97); border-style: dashed; border-color: #000; box-shadow: none; }
+        .drag-over-column { border-color: #000 !important; background-color: #f9fafb !important; }
+        .drop-indicator { height: 3px; background: #000; border-radius: 2px; margin: -1px 0; pointer-events: none; position: relative; z-index: 10; }
+
+        /* Card Collapse */
+        .card-body { max-height: 1000px; opacity: 1; transition: all 0.3s ease; overflow: hidden; }
+        .vehicle-card.collapsed .card-body { max-height: 0 !important; opacity: 0; padding-top: 0; padding-bottom: 0; margin-top: 0; border-top-width: 0; }
+        .vehicle-card.collapsed .collapse-toggle i { transform: rotate(-90deg); }
+
+        /* Slide-over Panels */
+        #logbookPanel, #bulletinPanel { transition: transform 0.3s cubic-bezier(0.16,1,0.3,1); }
+        #logbookPanel { transform: translateX(-100%); }
+        #logbookPanel.open { transform: translateX(0); }
+        #bulletinPanel { transform: translateX(100%); }
+        #bulletinPanel.open { transform: translateX(0); }
+        .overlay-bg { transition: opacity 0.3s ease; opacity: 0; pointer-events: none; }
+        .overlay-bg.open { opacity: 1; pointer-events: all; }
+
+        /* Mobile swiper dots */
+        .swiper-dot { transition: all 0.3s ease; width: 8px; height: 8px; border-radius: 50%; background: #d1d5db; position: relative; }
+        .swiper-dot.active { width: 24px; border-radius: 4px; background: #000; }
+        .swiper-dot::after { content: attr(data-count); position: absolute; top: -18px; left: 50%; transform: translateX(-50%); font-family: 'JetBrains Mono', monospace; font-size: 0.55rem; font-weight: 800; color: #6b7280; opacity: 0; transition: opacity 0.2s; }
+        .swiper-dot.active::after { opacity: 1; }
+
+        /* Print */
+        @media print {
+            body * { visibility: hidden !important; }
+            .print-overlay, .print-overlay * { visibility: visible !important; }
+            .print-overlay { position: absolute; top: 0; left: 0; background: #fff; width: 100%; }
+            .print-actions { display: none !important; }
+        }
+    </style>
+</head>
+<body class="antialiased text-black bg-white flex h-screen overflow-hidden">
+
+    <!-- Loading Shield — Budget Portal style (simple, clean) -->
+    <div id="loading-shield" class="fixed inset-0 z-[200] flex items-center justify-center text-2xl font-semibold text-white bg-black transition-opacity duration-300">
+        <div class="flex flex-col items-center gap-3">
+            <i class="ph-fill ph-wrench text-4xl"></i>
+            <span>Syncing Fleet...</span>
+        </div>
+    </div>
+
+    <!-- ══════════════════════════════════════════════
+         SIDEBAR — Budget Portal: w-20 md:w-64
+    ══════════════════════════════════════════════ -->
+    <aside id="sidebar-primary" class="flex flex-col flex-shrink-0 w-1/12 bg-white border-r border-black z-30 overflow-x-hidden">
+
+        <!-- Logo row -->
+        <button onclick="void(0)" class="flex items-center justify-center md:justify-start md:px-6 h-16 border-b border-black flex-shrink-0 hover:bg-gray-50 transition-colors w-full cursor-default">
+            <i class="ph-fill ph-wrench text-2xl text-black flex-shrink-0"></i>
+            <span class="ml-3 text-lg font-bold hidden md:block">Fleet Tracker</span>
+        </button>
+
+        <!-- Primary actions -->
+        <div class="p-2 space-y-1 border-b border-gray-200">
+            <button onclick="openModal('add')" title="Add Unit"
+                class="w-full flex items-center justify-center md:justify-start p-2 rounded-md hover:bg-gray-100 text-gray-600 hover:text-black transition-colors">
+                <i class="ph-bold ph-plus-circle text-xl flex-shrink-0"></i>
+                <span class="ml-3 text-xs font-bold hidden md:block">Add Unit</span>
+            </button>
+            <button onclick="openAddTicketModal()" title="Add Ticket"
+                class="w-full flex items-center justify-center md:justify-start p-2 rounded-md hover:bg-gray-100 text-gray-600 hover:text-black transition-colors">
+                <i class="ph-bold ph-ticket text-xl flex-shrink-0"></i>
+                <span class="ml-3 text-xs font-bold hidden md:block">New Ticket</span>
+            </button>
+        </div>
+
+        <!-- Tools -->
+        <div class="p-2 space-y-1 border-b border-gray-200">
+            <button onclick="toggleGlobalCollapse()" title="Collapse All"
+                class="w-full flex items-center justify-center md:justify-start p-2 rounded-md hover:bg-gray-100 text-gray-600 hover:text-black transition-colors">
+                <i class="ph-bold ph-arrows-in-line-vertical text-xl flex-shrink-0"></i>
+                <span class="ml-3 text-xs font-bold hidden md:block">Collapse All</span>
+            </button>
+            <button onclick="printServiceTicketFromSearch()" title="Print Ticket"
+                class="w-full flex items-center justify-center md:justify-start p-2 rounded-md hover:bg-gray-100 text-gray-600 hover:text-black transition-colors">
+                <i class="ph-bold ph-printer text-xl flex-shrink-0"></i>
+                <span class="ml-3 text-xs font-bold hidden md:block">Print Ticket</span>
+            </button>
+        </div>
+
+        <!-- Spacer -->
+        <div class="flex-1"></div>
+
+        <!-- Panels -->
+        <div class="p-2 space-y-1 border-t border-gray-200">
+            <button onclick="toggleLogbook()" title="Logbook"
+                class="w-full flex items-center justify-center md:justify-start p-2 rounded-md hover:bg-gray-100 text-gray-600 hover:text-black transition-colors">
+                <i class="ph-bold ph-book-bookmark text-xl flex-shrink-0"></i>
+                <span class="ml-3 text-xs font-bold hidden md:block">Logbook</span>
+            </button>
+            <button onclick="toggleBulletin()" id="bulletinToggle" title="Bulletin Board"
+                class="w-full flex items-center justify-center md:justify-start p-2 rounded-md hover:bg-gray-100 text-gray-600 hover:text-black transition-colors relative">
+                <i class="ph-bold ph-push-pin text-xl flex-shrink-0"></i>
+                <span class="ml-3 text-xs font-bold hidden md:block">Bulletin</span>
+                <span id="msgCount" class="absolute top-1 right-1 bg-red-600 text-white text-[9px] font-bold px-1.5 rounded-full shadow hidden">0</span>
+            </button>
+        </div>
+
+        <!-- User footer — matches Budget Portal exactly -->
+        <div class="p-4 border-t border-black flex items-center justify-center md:justify-between bg-white">
+            <div class="h-8 w-8 rounded-full bg-black flex items-center justify-center text-white font-bold text-xs flex-shrink-0" id="sidebar-avatar">R</div>
+            <div class="hidden md:flex flex-col ml-2 flex-1 min-w-0">
+                <span id="sidebar-username" class="text-xs font-bold text-black truncate">Fleet Manager</span>
+                <span class="text-[9px] uppercase tracking-wider text-gray-500">Repair Tracker</span>
+            </div>
+        </div>
+    </aside>
+
+    <!-- ══════════════════════════════════════════════
+         MAIN
+    ══════════════════════════════════════════════ -->
+    <main class="flex-1 flex flex-col h-full overflow-hidden bg-white relative z-10">
+
+        <!-- Header — Budget Portal style -->
+        <header class="bg-white px-4 md:px-8 py-4 flex flex-col md:flex-row md:justify-between md:items-center border-b border-black shrink-0 gap-3">
+            <div>
+                <h1 class="text-2xl font-bold text-black tracking-tight">Fleet Tracker</h1>
+                <p class="text-sm text-gray-500 mt-1" id="current-date-display">Live Data</p>
+            </div>
+            <div class="flex items-center gap-3">
+                <div class="relative w-full md:w-64">
+                    <i class="ph-bold ph-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"></i>
+                    <input type="text" id="searchInput" placeholder="Search vehicle or issue..." onkeyup="renderBoard()"
+                        class="w-full pl-9 pr-4 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-0 focus:border-black transition-colors">
+                </div>
+            </div>
+        </header>
+
+        <!-- KPI Bar — Budget Portal flat card style -->
+        <div class="flex gap-4 px-4 md:px-8 py-4 shrink-0 overflow-x-auto border-b border-black bg-white custom-scroll">
+            <div class="bg-white border border-black rounded-lg p-4 min-w-[170px] flex-1">
+                <dl>
+                    <dt class="text-[10px] text-gray-400 uppercase font-bold tracking-wider mb-1">Reported</dt>
+                    <dd class="text-3xl font-bold text-black mt-1 font-mono" id="kpi-total">0</dd>
+                </dl>
+            </div>
+            <div class="bg-white border border-black rounded-lg p-4 min-w-[170px] flex-1">
+                <dl>
+                    <dt class="text-[10px] text-gray-400 uppercase font-bold tracking-wider mb-1">Ready for Pickup</dt>
+                    <dd class="text-3xl font-bold text-black mt-1 font-mono" id="kpi-ready">0</dd>
+                </dl>
+            </div>
+            <div class="bg-white border border-black rounded-lg p-4 min-w-[170px] flex-1">
+                <dl>
+                    <dt class="text-[10px] text-gray-400 uppercase font-bold tracking-wider mb-1">Parts Hold</dt>
+                    <dd class="text-3xl font-bold text-black mt-1 font-mono" id="kpi-parts">0</dd>
+                </dl>
+            </div>
+            <div class="bg-white border border-black rounded-lg p-4 min-w-[170px] flex-1">
+                <dl>
+                    <dt class="text-[10px] text-gray-400 uppercase font-bold tracking-wider mb-1">Completed</dt>
+                    <dd class="text-3xl font-bold text-black mt-1 font-mono" id="kpi-complete">0</dd>
+                </dl>
+            </div>
+        </div>
+
+        <!-- Mobile swiper nav -->
+        <div class="md:hidden flex items-center justify-evenly px-4 py-3 bg-white border-b border-gray-200 shrink-0">
+            <button id="swiperPrev" onclick="swiperGo(-1)" class="w-8 h-8 flex items-center justify-center border border-gray-300 rounded-full hover:bg-gray-100 disabled:opacity-30"><i class="ph-bold ph-caret-left"></i></button>
+            <div class="flex items-center gap-2" id="swiperDots"></div>
+            <button id="swiperNext" onclick="swiperGo(1)" class="w-8 h-8 flex items-center justify-center border border-gray-300 rounded-full hover:bg-gray-100 disabled:opacity-30"><i class="ph-bold ph-caret-right"></i></button>
+        </div>
+
+        <!-- Kanban Board -->
+        <div class="flex-1 flex md:gap-3 p-0 md:p-6 w-full overflow-x-hidden overflow-y-hidden custom-scroll kanban-board bg-white" id="kanbanBoard">
+
+            <!-- On the Road -->
+            <div class="kanban-column flex flex-col flex-1 min-w-0 bg-white md:border md:border-black md:rounded-lg overflow-hidden h-full transition-transform" data-col-type="on_the_road">
+                <div class="bg-white px-4 py-3 border-b border-gray-200 flex justify-between items-center shrink-0">
+                    <div class="flex items-center gap-2">
+                        <div class="w-2 h-2 rounded-full bg-c_road"></div>
+                        <h2 class="text-xs font-bold text-black uppercase tracking-wide">On the Road</h2>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <button onclick="toggleColumnCollapse(this)" class="text-gray-400 hover:text-black hidden md:block text-xs"><i class="ph-bold ph-minus"></i></button>
+                        <span class="bg-gray-100 text-gray-600 text-xs font-mono px-2 py-0.5 rounded border border-gray-200" id="count-col-road">0</span>
+                    </div>
+                </div>
+                <div class="column-content flex-1 overflow-y-auto p-3 space-y-2 custom-scroll" id="col-on-the-road" data-col="on_the_road"></div>
+            </div>
+
+            <!-- Complaints -->
+            <div class="kanban-column flex flex-col flex-1 min-w-0 bg-white md:border md:border-black md:rounded-lg overflow-hidden h-full transition-transform">
+                <div class="bg-white px-4 py-3 border-b border-gray-200 flex justify-between items-center shrink-0">
+                    <div class="flex items-center gap-2">
+                        <div class="w-2 h-2 rounded-full bg-c_intake"></div>
+                        <h2 class="text-xs font-bold text-black uppercase tracking-wide">Complaints</h2>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <button onclick="toggleColumnCollapse(this)" class="text-gray-400 hover:text-black hidden md:block text-xs"><i class="ph-bold ph-minus"></i></button>
+                        <span class="bg-gray-100 text-gray-600 text-xs font-mono px-2 py-0.5 rounded border border-gray-200" id="count-col-1">0</span>
+                    </div>
+                </div>
+                <div class="column-content flex-1 overflow-y-auto p-3 space-y-2 custom-scroll" id="col-complaints" data-col="complaints"></div>
+            </div>
+
+            <!-- Ready for Pickup -->
+            <div class="kanban-column flex flex-col flex-1 min-w-0 bg-white md:border md:border-black md:rounded-lg overflow-hidden h-full transition-transform">
+                <div class="bg-white px-4 py-3 border-b border-gray-200 flex justify-between items-center shrink-0">
+                    <div class="flex items-center gap-2">
+                        <div class="w-2 h-2 rounded-full bg-c_ready"></div>
+                        <h2 class="text-xs font-bold text-black uppercase tracking-wide">Ready for Pickup</h2>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <button onclick="toggleColumnCollapse(this)" class="text-gray-400 hover:text-black hidden md:block text-xs"><i class="ph-bold ph-minus"></i></button>
+                        <span class="bg-gray-100 text-gray-600 text-xs font-mono px-2 py-0.5 rounded border border-gray-200" id="count-col-2">0</span>
+                    </div>
+                </div>
+                <div class="column-content flex-1 overflow-y-auto p-3 space-y-2 custom-scroll" id="col-ready" data-col="ready"></div>
+            </div>
+
+            <!-- Parts Hold -->
+            <div class="kanban-column flex flex-col flex-1 min-w-0 bg-white md:border md:border-black md:rounded-lg overflow-hidden h-full transition-transform">
+                <div class="bg-white px-4 py-3 border-b border-gray-200 flex justify-between items-center shrink-0">
+                    <div class="flex items-center gap-2">
+                        <div class="w-2 h-2 rounded-full bg-c_parts"></div>
+                        <h2 class="text-xs font-bold text-black uppercase tracking-wide">Parts Hold</h2>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <button onclick="toggleColumnCollapse(this)" class="text-gray-400 hover:text-black hidden md:block text-xs"><i class="ph-bold ph-minus"></i></button>
+                        <span class="bg-gray-100 text-gray-600 text-xs font-mono px-2 py-0.5 rounded border border-gray-200" id="count-col-3">0</span>
+                    </div>
+                </div>
+                <div class="column-content flex-1 overflow-y-auto p-3 space-y-2 custom-scroll" id="col-parts" data-col="parts"></div>
+            </div>
+
+            <!-- In Progress -->
+            <div class="kanban-column flex flex-col flex-1 min-w-0 bg-white md:border md:border-black md:rounded-lg overflow-hidden h-full transition-transform">
+                <div class="bg-white px-4 py-3 border-b border-gray-200 flex justify-between items-center shrink-0">
+                    <div class="flex items-center gap-2">
+                        <div class="w-2 h-2 rounded-full bg-c_shop"></div>
+                        <h2 class="text-xs font-bold text-black uppercase tracking-wide">In Progress</h2>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <button onclick="toggleColumnCollapse(this)" class="text-gray-400 hover:text-black hidden md:block text-xs"><i class="ph-bold ph-minus"></i></button>
+                        <span class="bg-gray-100 text-gray-600 text-xs font-mono px-2 py-0.5 rounded border border-gray-200" id="count-col-4">0</span>
+                    </div>
+                </div>
+                <div class="column-content flex-1 overflow-y-auto p-3 space-y-2 custom-scroll" id="col-progress" data-col="progress"></div>
+            </div>
+
+            <!-- Returned -->
+            <div class="kanban-column flex flex-col flex-1 min-w-0 bg-white md:border md:border-black md:rounded-lg overflow-hidden h-full transition-transform">
+                <div class="bg-white px-4 py-3 border-b border-gray-200 flex justify-between items-center shrink-0">
+                    <div class="flex items-center gap-2">
+                        <div class="w-2 h-2 rounded-full bg-c_done"></div>
+                        <h2 class="text-xs font-bold text-black uppercase tracking-wide">Returned</h2>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <button onclick="toggleColumnCollapse(this)" class="text-gray-400 hover:text-black hidden md:block text-xs"><i class="ph-bold ph-minus"></i></button>
+                        <span class="bg-gray-100 text-gray-600 text-xs font-mono px-2 py-0.5 rounded border border-gray-200" id="count-col-5">0</span>
+                    </div>
+                </div>
+                <div class="column-content flex-1 overflow-y-auto p-3 space-y-2 custom-scroll" id="col-returned" data-col="returned"></div>
+            </div>
+
+        </div>
+    </main>
+
+    <!-- ══════════════════════════════════════════════
+         LOGBOOK PANEL
+    ══════════════════════════════════════════════ -->
+    <div class="overlay-bg fixed inset-0 bg-black/20 backdrop-blur-sm z-40" id="logbookOverlay" onclick="toggleLogbook()"></div>
+    <div class="fixed top-0 left-0 h-full w-full max-w-md bg-white border-r border-black shadow-2xl z-50 flex flex-col" id="logbookPanel">
+        <div class="flex justify-between items-center p-4 border-b border-gray-200 bg-gray-50">
+            <div class="flex items-center gap-2">
+                <i class="ph-bold ph-book-bookmark text-xl text-black"></i>
+                <h2 class="text-sm font-bold uppercase tracking-wide text-black">Logbook</h2>
+            </div>
+            <button onclick="toggleLogbook()" class="text-gray-400 hover:text-black"><i class="ph-bold ph-x text-xl"></i></button>
+        </div>
+        <div class="flex gap-2 p-3 border-b border-gray-200">
+            <button class="logbook-filter-btn px-3 py-1 text-xs font-bold rounded-md bg-black text-white" data-filter="all" onclick="setLogbookFilter('all',this)">All</button>
+            <button class="logbook-filter-btn px-3 py-1 text-xs font-bold rounded-md border border-gray-200 text-gray-600 hover:bg-gray-50" data-filter="today" onclick="setLogbookFilter('today',this)">Today</button>
+            <button class="logbook-filter-btn px-3 py-1 text-xs font-bold rounded-md border border-gray-200 text-gray-600 hover:bg-gray-50" data-filter="week" onclick="setLogbookFilter('week',this)">This Week</button>
+        </div>
+        <div class="flex-1 overflow-y-auto custom-scroll p-4 space-y-2 bg-gray-50" id="logbookFeed"></div>
+    </div>
+
+    <!-- ══════════════════════════════════════════════
+         BULLETIN PANEL
+    ══════════════════════════════════════════════ -->
+    <div class="overlay-bg fixed inset-0 bg-black/20 backdrop-blur-sm z-40" id="bulletinOverlay" onclick="toggleBulletin()"></div>
+    <div class="fixed top-0 right-0 h-full w-full max-w-md bg-white border-l border-black shadow-2xl z-50 flex flex-col" id="bulletinPanel">
+        <div class="flex justify-between items-center p-4 border-b border-gray-200 bg-gray-50">
+            <div class="flex items-center gap-2">
+                <i class="ph-bold ph-push-pin text-xl text-black"></i>
+                <h2 class="text-sm font-bold uppercase tracking-wide text-black">Bulletin Board</h2>
+            </div>
+            <button onclick="toggleBulletin()" class="text-gray-400 hover:text-black"><i class="ph-bold ph-x text-xl"></i></button>
+        </div>
+        <div class="p-4 border-b border-gray-200 bg-white">
+            <div class="flex gap-2 mb-2">
+                <input type="text" id="msgAuthor" placeholder="Your name..." class="flex-1 rounded-md border border-gray-300 p-2 text-sm focus:border-black focus:ring-0">
+                <select id="msgPriority" class="rounded-md border border-gray-300 p-2 text-sm focus:border-black focus:ring-0">
+                    <option value="fyi">FYI</option>
+                    <option value="info" selected>Info</option>
+                    <option value="heads-up">Heads Up</option>
+                    <option value="urgent">Urgent</option>
+                </select>
+            </div>
+            <textarea id="msgBody" placeholder="Post a message to the board..." rows="3" class="w-full rounded-md border border-gray-300 p-2 text-sm focus:border-black focus:ring-0 mb-2 resize-none"></textarea>
+            <div class="flex justify-end">
+                <button id="postBtn" onclick="postMessage()" class="px-4 py-2 bg-black text-white text-xs font-bold rounded-md disabled:opacity-50 hover:bg-gray-800" disabled>Post Message</button>
+            </div>
+        </div>
+        <div class="flex-1 overflow-y-auto custom-scroll p-4 space-y-3 bg-gray-50" id="bulletinFeed"></div>
+    </div>
+
+    <!-- ══════════════════════════════════════════════
+         ADD TICKET MODAL — Budget Portal modal style
+    ══════════════════════════════════════════════ -->
+    <div id="addTicketModal" class="fixed inset-0 z-[60] hidden">
+        <div class="fixed inset-0 bg-black/20 backdrop-blur-sm" onclick="closeAddTicketModal()"></div>
+        <div class="fixed inset-0 z-10 w-screen overflow-y-auto flex items-center justify-center p-4 pointer-events-none">
+            <div class="bg-white w-full max-w-lg rounded-lg border border-black shadow-none p-6 pointer-events-auto">
+                <div class="flex justify-between items-center mb-4">
+                    <h3 class="text-lg font-bold text-black">Add New Ticket</h3>
+                    <button onclick="closeAddTicketModal()" class="text-gray-400 hover:text-black"><i class="ph-bold ph-x text-xl"></i></button>
+                </div>
+
+                <div class="bg-gray-50 border border-gray-200 rounded-lg p-4 mb-4">
+                    <label class="block text-xs font-bold uppercase text-gray-500 mb-1">Your Name (For Logs)</label>
+                    <input type="text" id="ticketUser" class="w-full rounded-md border border-gray-300 p-2 text-sm focus:border-black focus:ring-0" placeholder="E.g. Dispatcher Dave" required>
+                </div>
+
+                <div class="space-y-4">
+                    <div>
+                        <label class="block text-xs font-bold uppercase text-gray-500 mb-1">Vehicle ID</label>
+                        <input type="text" id="ticketVehicleInput" list="ticketVehicleList" class="w-full rounded-md border border-gray-300 p-2 font-mono text-sm focus:border-black focus:ring-0 uppercase" placeholder="Type or select ID..." oninput="onTicketVehicleInput()" required>
+                        <datalist id="ticketVehicleList"></datalist>
+                    </div>
+
+                    <div id="ticketVehicleInfo" class="hidden bg-blue-50 border border-blue-100 rounded-md p-3 text-xs text-blue-800 flex gap-4 font-mono font-medium">
+                        <span id="tvType"></span><span id="tvHome"></span><span id="tvCondition"></span><span id="tvInspection"></span>
+                    </div>
+
+                    <div>
+                        <label class="block text-xs font-bold uppercase text-gray-500 mb-1">Issue / Complaint</label>
+                        <input type="text" id="ticketIssue" class="w-full rounded-md border border-gray-300 p-2 text-sm focus:border-black focus:ring-0" placeholder="Describe the issue..." required>
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-xs font-bold uppercase text-gray-500 mb-1">Priority</label>
+                            <select id="ticketPriority" class="w-full rounded-md border border-gray-300 p-2 text-sm focus:border-black focus:ring-0 font-medium">
+                                <option value="Urgent">🔴 Urgent</option>
+                                <option value="High">⚠ High</option>
+                                <option value="Oil Change / Bulb Replacement">🔧 Maintenance</option>
+                                <option value="Normal" selected>Normal</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-bold uppercase text-gray-500 mb-1">Requested By</label>
+                            <input type="text" id="ticketRequestedBy" class="w-full rounded-md border border-gray-300 p-2 text-sm focus:border-black focus:ring-0" placeholder="Name">
+                        </div>
+                    </div>
+
+                    <div>
+                        <label class="block text-xs font-bold uppercase text-gray-500 mb-1">Notes</label>
+                        <textarea id="ticketNotes" rows="2" class="w-full rounded-md border border-gray-300 p-2 text-sm focus:border-black focus:ring-0 resize-none" placeholder="Optional notes..."></textarea>
+                    </div>
+                </div>
+
+                <div class="mt-6 flex justify-end space-x-2 border-t border-gray-100 pt-4">
+                    <button onclick="closeAddTicketModal()" class="px-4 py-2 bg-white border border-gray-300 rounded-md text-sm font-bold text-black hover:bg-gray-50">Cancel</button>
+                    <button id="createTicketBtn" onclick="createTicketForVehicle()" class="px-4 py-2 bg-black text-white rounded-md text-sm font-bold hover:bg-gray-800 flex items-center gap-2">
+                        <i class="ph-bold ph-plus"></i> Create Ticket
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ══════════════════════════════════════════════
+         ENTRY MODAL (Add / Edit Unit)
+    ══════════════════════════════════════════════ -->
+    <div id="entryModal" class="fixed inset-0 z-[60] hidden">
+        <div class="fixed inset-0 bg-black/20 backdrop-blur-sm" onclick="closeModal()"></div>
+        <div class="fixed inset-0 z-10 w-screen overflow-y-auto flex items-start justify-center p-4 pointer-events-none custom-scroll">
+            <div class="bg-white w-full max-w-2xl rounded-lg border border-black shadow-none p-6 pointer-events-auto my-4">
+                <div class="flex justify-between items-center mb-4 border-b border-gray-100 pb-4">
+                    <h3 class="text-lg font-bold text-black" id="modalTitle">Edit Unit</h3>
+                    <button onclick="closeModal()" class="text-gray-400 hover:text-black"><i class="ph-bold ph-x text-xl"></i></button>
+                </div>
+
+                <form id="vehicleForm" onsubmit="saveVehicle(event)" class="space-y-4">
+                    <input type="hidden" id="mode" value="add">
+                    <input type="hidden" id="targetRowIndex">
+                    <input type="hidden" id="vHistory">
+
+                    <div class="bg-gray-50 border border-gray-200 rounded-lg p-4">
+                        <label class="block text-xs font-bold uppercase text-gray-500 mb-1">Your Name (For Logs)</label>
+                        <input type="text" id="currentUser" class="w-full rounded-md border border-gray-300 p-2 text-sm focus:border-black focus:ring-0" placeholder="E.g. Mechanic Mike"
+                            onchange="localStorage.setItem('dlx_username', this.value); updateSidebarUser();" required>
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-xs font-bold uppercase text-gray-500 mb-1">Vehicle ID</label>
+                            <input type="text" id="vID" class="w-full rounded-md border border-gray-300 p-2 font-mono text-sm focus:border-black focus:ring-0 uppercase" required>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-bold uppercase text-gray-500 mb-1">Vehicle Type</label>
+                            <select id="vType" class="w-full rounded-md border border-gray-300 p-2 text-sm focus:border-black focus:ring-0">
+                                <option value="">Select...</option>
+                                <option value="Van">Van</option>
+                                <option value="Prius">Prius</option>
+                                <option value="Scion">Scion</option>
+                                <option value="Other">Other</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-xs font-bold uppercase text-gray-500 mb-1">Priority</label>
+                            <select id="vPriority" class="w-full rounded-md border border-gray-300 p-2 text-sm focus:border-black focus:ring-0 font-medium">
+                                <option value="Urgent">🔴 Urgent</option>
+                                <option value="High">⚠ High</option>
+                                <option value="Oil Change / Bulb Replacement">🔧 Maintenance</option>
+                                <option value="Normal" selected>Normal</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-bold uppercase text-gray-500 mb-1">Condition</label>
+                            <select id="vStatus" class="w-full rounded-md border border-gray-300 p-2 text-sm focus:border-black focus:ring-0">
+                                <option value="Operational">Operational</option>
+                                <option value="Warning">Warning</option>
+                                <option value="Down">Down</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-xs font-bold uppercase text-gray-500 mb-1">Home Location</label>
+                            <input type="text" id="vHomeLocation" class="w-full rounded-md border border-gray-300 p-2 text-sm focus:border-black focus:ring-0" placeholder="e.g. Eugene">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-bold uppercase text-gray-500 mb-1">Requested By</label>
+                            <input type="text" id="vRequestedBy" class="w-full rounded-md border border-gray-300 p-2 text-sm focus:border-black focus:ring-0">
+                        </div>
+                    </div>
+
+                    <div>
+                        <label class="block text-xs font-bold uppercase text-gray-500 mb-1">Issue</label>
+                        <input type="text" id="vIssue" class="w-full rounded-md border border-gray-300 p-2 text-sm focus:border-black focus:ring-0" required>
+                    </div>
+
+                    <div>
+                        <label class="block text-xs font-bold uppercase text-gray-500 mb-1">Notes / Updates</label>
+                        <textarea id="vNotes" rows="3" class="w-full rounded-md border border-gray-300 p-2 text-sm focus:border-black focus:ring-0 resize-none"></textarea>
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-4 p-4 border border-gray-200 rounded-lg bg-gray-50">
+                        <div>
+                            <label class="block text-xs font-bold uppercase text-gray-500 mb-1">Current Location</label>
+                            <select id="vLocation" class="w-full rounded-md border border-gray-300 p-2 text-sm focus:border-black focus:ring-0">
+                                <option value="On the Road">On the Road</option>
+                                <option value="Dispatch Lot">Dispatch Lot</option>
+                                <option value="Pam (Ridesource, DMV)">Pam (Ridesource, DMV)</option>
+                                <option value="Shop">Shop</option>
+                                <option value="LTD Tires">LTD Tires</option>
+                                <option value="LTD Mechanic">LTD Mechanic</option>
+                                <option value="Paint">Paint</option>
+                                <option value="Glass">Glass</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-bold uppercase text-gray-500 mb-1">Shop Status</label>
+                            <select id="vShopStatus" onchange="togglePartsFields()" class="w-full rounded-md border border-gray-300 p-2 text-sm focus:border-black focus:ring-0 font-medium">
+                                <option value="Reported">Reported</option>
+                                <option value="Ready for Pickup">Ready for Pickup</option>
+                                <option value="Dispatched to Shop">Dispatched to Shop</option>
+                                <option value="Received">Received</option>
+                                <option value="Assessment">Assessment</option>
+                                <option value="Repair in Progress">Repair in Progress</option>
+                                <option value="Awaiting part order">Awaiting part order</option>
+                                <option value="Parts Received - Waiting for Technician">Parts Received - Waiting for Technician</option>
+                                <option value="Ready for Delivery">Ready for Delivery</option>
+                                <option value="Complete">Complete</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="flex items-center gap-2 p-2">
+                        <input type="checkbox" id="vOnTheRoad" class="w-4 h-4 rounded border-gray-300 text-black focus:ring-black">
+                        <label for="vOnTheRoad" class="text-sm font-bold text-gray-700 cursor-pointer">On the Road (tracked separately from status)</label>
+                    </div>
+
+                    <div id="partsSection" class="hidden bg-orange-50 border border-orange-200 p-4 rounded-lg">
+                        <div class="grid grid-cols-2 gap-4">
+                            <div>
+                                <label class="block text-xs font-bold uppercase text-orange-800 mb-1">Parts Ordered Date</label>
+                                <input type="date" id="vPartsOrdered" class="w-full rounded-md border border-orange-300 p-2 text-sm focus:border-orange-500 focus:ring-0 bg-white">
+                            </div>
+                            <div>
+                                <label class="block text-xs font-bold uppercase text-orange-800 mb-1">ETA</label>
+                                <input type="date" id="vPartsEta" class="w-full rounded-md border border-orange-300 p-2 text-sm focus:border-orange-500 focus:ring-0 bg-white font-bold text-orange-700">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-xs font-bold uppercase text-gray-500 mb-1">Date In</label>
+                            <input type="date" id="vDate" class="w-full rounded-md border border-gray-300 p-2 text-sm focus:border-black focus:ring-0" required>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-bold uppercase text-gray-500 mb-1">Ridesource Inspection</label>
+                            <input type="date" id="vInspectionDate" class="w-full rounded-md border border-gray-300 p-2 text-sm focus:border-black focus:ring-0">
+                        </div>
+                    </div>
+
+                    <div class="border-t border-gray-200 pt-4 mt-4">
+                        <div class="flex justify-between items-end mb-2">
+                            <h4 class="text-xs font-bold uppercase text-gray-500">Activity Log</h4>
+                            <span id="lastUpdatedBy" class="text-[10px] font-bold text-gray-400"></span>
+                        </div>
+                        <div id="historyList" class="bg-gray-50 border border-gray-200 rounded-md p-3 h-40 overflow-y-auto custom-scroll text-xs space-y-2"></div>
+                    </div>
+
+                    <div class="mt-6 flex flex-wrap justify-between items-center border-t border-gray-100 pt-4 gap-2">
+                        <div class="flex gap-2">
+                            <button type="button" id="deleteBtn" class="hidden px-4 py-2 bg-white border border-red-200 text-red-600 rounded-md text-sm font-bold hover:bg-red-50" onclick="deleteCurrent()">
+                                <i class="ph-bold ph-trash mr-1"></i> Delete
+                            </button>
+                            <button type="button" id="printBtn" class="hidden px-4 py-2 bg-white border border-gray-300 text-black rounded-md text-sm font-bold hover:bg-gray-50" onclick="printServiceTicket(parseInt(document.getElementById('targetRowIndex').value))">
+                                <i class="ph-bold ph-printer mr-1"></i> Print
+                            </button>
+                        </div>
+                        <div class="flex gap-2 w-full md:w-auto justify-end">
+                            <button type="button" id="closeRoadBtn" class="hidden px-4 py-2 bg-white border border-green-200 text-green-700 rounded-md text-sm font-bold hover:bg-green-50" onclick="closeAndReturnToRoadFromModal()">
+                                <i class="ph-bold ph-check-circle mr-1"></i> Close &amp; Return
+                            </button>
+                            <button type="button" onclick="closeModal()" class="px-4 py-2 bg-white border border-gray-300 rounded-md text-sm font-bold text-black hover:bg-gray-50">Cancel</button>
+                            <button type="submit" id="saveBtn" class="px-6 py-2 bg-black text-white rounded-md text-sm font-bold hover:bg-gray-800">Save</button>
+                        </div>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- ══════════════════════════════════════════════
+         ALL JAVASCRIPT — completely unchanged except:
+         • updateSidebarUser() added (sidebar user display)
+         • card.className uses rounded-lg (visual only)
+    ══════════════════════════════════════════════ -->
+    <script>
+        const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxVv34BESHIyT_-HohJ-gUc4a2QdQdwHOzEmxFtr1WFxjwV620spd3KnjyHd8If5HSfYQ/exec";
+        let fleetData = [], collapsedCards = new Set();
+
+        // ==================== FIREBASE ====================
+        const firebaseConfig = {
+            apiKey: "AIzaSyCnH_ILuDyJB1mC0iBlrfYIAFVumD74yo4",
+            authDomain: "dlx-dmt-tracker.firebaseapp.com",
+            projectId: "dlx-dmt-tracker",
+            storageBucket: "dlx-dmt-tracker.firebasestorage.app",
+            messagingSenderId: "958627003202",
+            appId: "1:958627003202:web:07ea8476831ef49e4ea6db",
+            measurementId: "G-3XSEV0RBX0"
+        };
+        firebase.initializeApp(firebaseConfig);
+        const db = firebase.firestore();
+
+        let firestoreMap = {};
+        let syntheticRowCounter = 1;
+
+        // Sidebar user display sync
+        function updateSidebarUser() {
+            const name = localStorage.getItem('dlx_username') || 'Fleet Manager';
+            const el = document.getElementById('sidebar-username');
+            const av = document.getElementById('sidebar-avatar');
+            if (el) el.textContent = name;
+            if (av) av.textContent = name.charAt(0).toUpperCase();
+        }
+
+        function generateTicketId() {
+            const d = new Date(), ds = d.toISOString().split('T')[0].replace(/-/g, ''), rand = Math.random().toString(36).substring(2, 6).toUpperCase();
+            return 'TKT-' + ds + '-' + rand;
+        }
+
+        function transformFirestoreData(vehicleDocs) {
+            const result = []; firestoreMap = {}; syntheticRowCounter = 1;
+            vehicleDocs.forEach(vDoc => {
+                const vData = vDoc.data(), vehicleId = vDoc.id, tickets = vData.tickets || [];
+                if (tickets.length === 0) {
+                    const rowIdx = syntheticRowCounter++;
+                    firestoreMap[rowIdx] = { vehicleId, ticketId: null, ticketIndex: -1 };
+                    result.push({
+                        rowIndex: rowIdx, id: vehicleId, status: vData.status || 'Operational', vehicleType: vData.vehicleType || '',
+                        homeLocation: vData.homeLocation || '', inspectionDate: vData.inspectionDate || '', location: vData.location || 'On the Road', onTheRoad: true,
+                        issue: '', shopStatus: 'Complete', priority: 'Normal', date: '', requestedBy: '', notes: '', partsOrdered: '', partsEta: '', history: '[]'
+                    });
+                } else {
+                    tickets.forEach((ticket, idx) => {
+                        const rowIdx = syntheticRowCounter++;
+                        firestoreMap[rowIdx] = { vehicleId, ticketId: ticket.ticketId, ticketIndex: idx };
+                        result.push({
+                            rowIndex: rowIdx, id: vehicleId, status: vData.status || 'Operational', vehicleType: vData.vehicleType || '',
+                            homeLocation: vData.homeLocation || '', inspectionDate: vData.inspectionDate || '', location: vData.location || 'On the Road', onTheRoad: vData.onTheRoad || false,
+                            issue: ticket.issue || '', shopStatus: ticket.shopStatus || 'Reported', priority: ticket.priority || 'Normal', date: ticket.date || '',
+                            requestedBy: ticket.requestedBy || '', notes: ticket.notes || '', partsOrdered: ticket.partsOrdered || '', partsEta: ticket.partsEta || '',
+                            history: JSON.stringify(ticket.history || [])
+                        });
+                    });
+                }
+            });
+            return result;
+        }
+
+        let firestoreUnsubscribe = null;
+        function initFirestoreListener() {
+            if (firestoreUnsubscribe) firestoreUnsubscribe();
+            firestoreUnsubscribe = db.collection('vehicles').onSnapshot(snapshot => {
+                fleetData = transformFirestoreData(snapshot.docs);
+                document.getElementById('loading-shield').classList.add('opacity-0', 'pointer-events-none');
+                setTimeout(() => document.getElementById('loading-shield').classList.add('hidden'), 300);
+                renderBoard();
+            }, err => {
+                console.error('Firestore listener error:', err);
+                showToast('❌ Real-time sync error');
+            });
+        }
+
+        function sheetBackupWrite(payload) {
+            fetch(SCRIPT_URL, { method: 'POST', body: JSON.stringify(payload) }).catch(err => console.warn('Sheet backup write failed:', err));
+        }
+
+        // ==================== DB WRITERS ====================
+        function vehicleRef(vehicleId) { return db.collection('vehicles').doc(vehicleId.trim().toUpperCase()); }
+
+        async function fsAddTicket(vehicleId, vehicleFields, ticketData) {
+            const ref = vehicleRef(vehicleId), doc = await ref.get(), ticketId = generateTicketId(), newTicket = { ticketId, ...ticketData };
+            if (doc.exists) {
+                const existing = doc.data(), tickets = existing.tickets || []; tickets.push(newTicket);
+                await ref.update({ ...vehicleFields, tickets, onTheRoad: false });
+            } else { await ref.set({ ...vehicleFields, tickets: [newTicket], onTheRoad: false }); }
+            return ticketId;
+        }
+
+        async function fsUpdateTicket(rowIndex, vehicleUpdates, ticketUpdates) {
+            const mapping = firestoreMap[rowIndex]; if (!mapping) return;
+            const ref = vehicleRef(mapping.vehicleId), doc = await ref.get(); if (!doc.exists) return;
+            const data = doc.data(), tickets = data.tickets || [], tIdx = tickets.findIndex(t => t.ticketId === mapping.ticketId);
+            if (tIdx >= 0) tickets[tIdx] = { ...tickets[tIdx], ...ticketUpdates };
+            await ref.update({ ...vehicleUpdates, tickets });
+        }
+
+        async function fsBulkUpdateVehicle(vehicleId, vehicleUpdates, ticketUpdates) {
+            const ref = vehicleRef(vehicleId), doc = await ref.get(); if (!doc.exists) return;
+            const data = doc.data(), tickets = (data.tickets || []).map(t => { if (t.shopStatus === 'Complete') return t; return { ...t, ...ticketUpdates }; });
+            await ref.update({ ...vehicleUpdates, tickets });
+        }
+
+        async function fsCloseTicket(vehicleId, ticketId, user) {
+            const ref = vehicleRef(vehicleId), doc = await ref.get(); if (!doc.exists) return;
+            const data = doc.data(), tickets = (data.tickets || []).map(t => {
+                if (t.ticketId !== ticketId) return t;
+                const hist = Array.isArray(t.history) ? t.history : []; hist.push({ ts: Date.now(), user, action: 'Closed', desc: 'Ticket closed' });
+                return { ...t, shopStatus: 'Complete', history: hist };
+            });
+            const stillActive = tickets.some(t => t.shopStatus !== 'Complete');
+            await ref.update({ status: stillActive ? data.status : 'Operational', location: stillActive ? data.location : 'On the Road', onTheRoad: !stillActive, tickets });
+        }
+
+        async function fsCloseAndReturnToRoad(vehicleId, user) {
+            const ref = vehicleRef(vehicleId), doc = await ref.get(); if (!doc.exists) return;
+            const data = doc.data(), tickets = (data.tickets || []).map(t => {
+                if (t.shopStatus === 'Complete') return t;
+                const hist = Array.isArray(t.history) ? t.history : []; hist.push({ ts: Date.now(), user, action: 'Closed', desc: 'Ticket closed, returned to On the Road' });
+                return { ...t, shopStatus: 'Complete', history: hist };
+            });
+            await ref.update({ status: 'Operational', location: 'On the Road', onTheRoad: true, tickets });
+        }
+
+        async function fsDeleteTicket(rowIndex) {
+            const mapping = firestoreMap[rowIndex]; if (!mapping) return;
+            const ref = vehicleRef(mapping.vehicleId), doc = await ref.get(); if (!doc.exists) return;
+            const data = doc.data(), tickets = (data.tickets || []).filter(t => t.ticketId !== mapping.ticketId);
+            if (tickets.length === 0) await ref.delete(); else await ref.update({ tickets });
+        }
+
+        const COLUMN_STATUSES = {
+            on_the_road: [], complaints: ["Reported"], ready: ["Ready for Pickup", "Dispatched to Shop"],
+            parts: ["Awaiting part order", "Assessment"], progress: ["Received", "Parts Received - Waiting for Technician", "Repair in Progress", "Ready for Delivery"], returned: ["Complete"]
+        };
+
+        function statusToCol(status, onTheRoad) {
+            if (onTheRoad === true) return 'on_the_road';
+            for (const [c, sts] of Object.entries(COLUMN_STATUSES)) { if (sts.includes(status)) return c; } return 'complaints';
+        }
+
+        function toggleGlobalCollapse() {
+            const cards = document.querySelectorAll('.vehicle-card'), anyOpen = [...cards].some(c => !c.classList.contains('collapsed'));
+            cards.forEach(c => { const k = c.dataset.cardKey; if(anyOpen) { c.classList.add('collapsed'); collapsedCards.add(k); } else { c.classList.remove('collapsed'); collapsedCards.delete(k); } });
+        }
+
+        function getUsername() { return document.getElementById('currentUser').value.trim() || localStorage.getItem('dlx_username') || "Unknown"; }
+        function createLogEntry(action, desc) { return { ts: Date.now(), user: getUsername(), action: action, desc: desc }; }
+        function parseHistory(jsonStr) { try { return jsonStr ? JSON.parse(jsonStr) : []; } catch(e) { return []; } }
+
+        function renderHistoryLog(historyArray) {
+            const list = document.getElementById('historyList');
+            if(!historyArray || historyArray.length === 0) { list.innerHTML = '<div class="text-center text-gray-400 p-2 italic">No history recorded</div>'; return; }
+            const sorted = [...historyArray].sort((a,b) => b.ts - a.ts);
+            list.innerHTML = sorted.map(h => {
+                const d = new Date(h.ts), timeStr = d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+                return `<div class="flex gap-2 py-1 border-b border-gray-100 last:border-0"><div class="text-gray-400 font-mono shrink-0">${timeStr}</div><div class="font-bold text-black shrink-0">${h.user}:</div><div class="text-gray-700">${h.desc}</div></div>`;
+            }).join('');
+        }
+
+        // ==================== MOBILE SWIPER ====================
+        let swiperIndex = 0;
+        function isMobile() { return window.innerWidth <= 768; }
+
+        function initSwiperDots() {
+            const container = document.getElementById('swiperDots'); container.innerHTML = '';
+            for (let i = 0; i < 6; i++) {
+                const dot = document.createElement('button'); dot.className = 'swiper-dot' + (i === swiperIndex ? ' active' : '');
+                dot.dataset.count = ''; dot.onclick = () => swiperGoTo(i); container.appendChild(dot);
+            }
+            updateSwiperUI();
+        }
+
+        function updateSwiperUI() {
+            if (!isMobile()) return;
+            const dots = document.querySelectorAll('.swiper-dot'), columns = document.querySelectorAll('.kanban-column');
+            const counts = ['road','1','2','3','4','5'].map(id => document.getElementById('count-col-'+id)?.textContent || '0');
+            dots.forEach((dot, i) => { dot.classList.toggle('active', i === swiperIndex); dot.dataset.count = counts[i]; });
+            columns.forEach((col, i) => { col.style.transform = `translateX(${-swiperIndex * 100}%)`; });
+            const p = document.getElementById('swiperPrev'), n = document.getElementById('swiperNext');
+            if(p) p.disabled = swiperIndex === 0; if(n) n.disabled = swiperIndex === 5;
+        }
+        function swiperGo(dir) { const next = swiperIndex + dir; if (next >= 0 && next <= 5) swiperGoTo(next); }
+        function swiperGoTo(idx) { swiperIndex = Math.max(0, Math.min(5, idx)); updateSwiperUI(); }
+
+        let touchStartX = 0, touchStartY = 0, touchDeltaX = 0, isSwiping = false;
+        document.getElementById('kanbanBoard').addEventListener('touchstart', e => { if(!isMobile()) return; touchStartX = e.touches[0].clientX; touchStartY = e.touches[0].clientY; isSwiping = false; }, {passive:true});
+        document.getElementById('kanbanBoard').addEventListener('touchmove', e => { if(!isMobile()) return; const dX = e.touches[0].clientX - touchStartX, dY = e.touches[0].clientY - touchStartY; if(!isSwiping && Math.abs(dX) > 10 && Math.abs(dX) > Math.abs(dY)*1.2) isSwiping = true; if(isSwiping) { e.preventDefault(); touchDeltaX = dX; document.querySelectorAll('.kanban-column').forEach(c => { c.style.transition='none'; c.style.transform=`translateX(calc(${-swiperIndex * 100}% + ${dX}px))`; }); } }, {passive:false});
+        document.getElementById('kanbanBoard').addEventListener('touchend', e => { if(!isMobile() || !isSwiping) return; document.querySelectorAll('.kanban-column').forEach(c => c.style.transition='transform 0.35s cubic-bezier(0.16,1,0.3,1)'); if(Math.abs(touchDeltaX) > 50) { if(touchDeltaX > 0 && swiperIndex > 0) swiperIndex--; else if(touchDeltaX < 0 && swiperIndex < 5) swiperIndex++; } updateSwiperUI(); isSwiping=false; touchDeltaX=0; }, {passive:true});
+
+        window.addEventListener('resize', () => { setTimeout(() => { if(isMobile()) updateSwiperUI(); else document.querySelectorAll('.kanban-column').forEach(c => { c.style.transform=''; c.style.transition=''; }); }, 150); });
+
+        // ==================== DRAG & DROP ====================
+        let draggedEl = null, currentIndicator = null;
+        function clearIndicators() { document.querySelectorAll('.drop-indicator').forEach(e=>e.remove()); document.querySelectorAll('.drag-over-column').forEach(e=>e.classList.remove('drag-over-column')); currentIndicator = null; }
+        function onDragStart(e, rowIndexes) { if (isMobile()) { e.preventDefault(); return; } const indexes = Array.isArray(rowIndexes) ? rowIndexes : [rowIndexes]; e.dataTransfer.setData('text/plain', JSON.stringify(indexes)); draggedEl = e.target.closest('.vehicle-card'); draggedEl.classList.add('dragging'); e.dataTransfer.effectAllowed = 'move'; const g = document.createElement('div'); g.style.cssText = 'position:absolute;top:-1000px;'; document.body.appendChild(g); e.dataTransfer.setDragImage(g, 0, 0); setTimeout(() => g.remove(), 0); }
+        function onDragEnd() { if (draggedEl) draggedEl.classList.remove('dragging'); draggedEl = null; clearIndicators(); }
+        function getClosestCard(col, y) { const cards = [...col.querySelectorAll('.vehicle-card:not(.dragging)')]; let closest = null, co = Number.NEGATIVE_INFINITY; for (const c of cards) { const b = c.getBoundingClientRect(), o = y - b.top - b.height / 2; if (o < 0 && o > co) { co = o; closest = c; } } return closest; }
+        function onDragOver(e) { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; const cc = e.target.closest('.column-content'); if (!cc) return; document.querySelectorAll('.drag-over-column').forEach(e => e.classList.remove('drag-over-column')); cc.closest('.kanban-column').classList.add('drag-over-column'); const cl = getClosestCard(cc, e.clientY); if (currentIndicator) currentIndicator.remove(); const ind = document.createElement('div'); ind.className = 'drop-indicator'; currentIndicator = ind; if (cl) cc.insertBefore(ind, cl); else cc.appendChild(ind); }
+
+        function showStatusPickerMulti(vehId, statuses, callback) {
+            const ol = document.createElement('div'); ol.className = 'fixed inset-0 bg-black/20 backdrop-blur-sm z-[150] flex items-center justify-center p-4';
+            ol.onclick = e => { if(e.target===ol) ol.remove(); };
+            const pk = document.createElement('div'); pk.className = 'bg-white rounded-lg border border-black p-6 w-full max-w-sm shadow-xl';
+            pk.innerHTML = `<h3 class="text-lg font-bold text-black mb-4">Set status for ${vehId}</h3>`;
+            const grid = document.createElement('div'); grid.className = 'space-y-2';
+            statuses.forEach(s => {
+                const b = document.createElement('button'); b.className = 'w-full text-left p-3 rounded-md border border-gray-200 hover:border-black hover:bg-gray-50 font-bold text-sm transition-colors'; b.textContent = s;
+                b.onclick = () => { ol.remove(); callback(s); }; grid.appendChild(b);
+            });
+            pk.appendChild(grid);
+            const c = document.createElement('button'); c.className = 'mt-4 w-full p-2 text-gray-500 font-bold text-sm hover:text-black'; c.textContent = 'Cancel'; c.onclick = () => ol.remove(); pk.appendChild(c);
+            ol.appendChild(pk); document.body.appendChild(ol);
+        }
+
+        function onDrop(e) {
+            e.preventDefault(); const cc = e.target.closest('.column-content'); let draggedIndexes;
+            try { draggedIndexes = JSON.parse(e.dataTransfer.getData('text/plain')); } catch (err) { clearIndicators(); return; }
+            if (!cc || !draggedIndexes || draggedIndexes.length === 0) { clearIndicators(); return; }
+
+            const targetColType = cc.dataset.col;
+            const firstVeh = fleetData.find(v => v.rowIndex == draggedIndexes[0]); if (!firstVeh) { clearIndicators(); return; }
+            const sc = statusToCol(firstVeh.shopStatus || "Reported", firstVeh.onTheRoad);
+
+            if (sc === targetColType) {
+                if (draggedEl && currentIndicator) cc.insertBefore(draggedEl, currentIndicator); else if (draggedEl) cc.appendChild(draggedEl);
+                if (draggedEl) draggedEl.classList.remove('dragging'); clearIndicators();
+            } else {
+                clearIndicators();
+                if (sc === 'on_the_road') {
+                    const user = getUsername(), vehicleId = firstVeh.id.trim().toUpperCase(), targetStatus = COLUMN_STATUSES[targetColType][0];
+                    showToast(`⟳ Moving off road...`);
+                    fsBulkUpdateVehicle(vehicleId, { onTheRoad: false }, { shopStatus: targetStatus || 'Reported' }).then(() => showToast(`✓ Moved by ${user}`)).catch(err => showToast("❌ Failed: " + err.message));
+                    draggedIndexes.forEach(idx => { const v = fleetData.find(f => f.rowIndex === idx); if (v) sheetBackupWrite({ action: 'update', rowIndex: v.rowIndex, user, id: v.id, status: v.status, issue: v.issue, date: v.date, shopStatus: targetStatus || v.shopStatus, location: v.location, partsOrdered: v.partsOrdered || '', partsEta: v.partsEta || '', priority: v.priority || 'Normal', homeLocation: v.homeLocation || '', notes: v.notes || '', requestedBy: v.requestedBy || '', vehicleType: v.vehicleType || '', onTheRoad: false }); });
+                    return;
+                }
+                if (targetColType === 'on_the_road') { if (!confirm('Close tickets and return vehicle to "On the Road"?')) return; closeAndReturnToRoad(draggedIndexes); return; }
+
+                const possibleStatuses = COLUMN_STATUSES[targetColType], moveUser = getUsername();
+                const applyStatusToAll = async (newStatus) => {
+                    const vehicleId = firstVeh.id.trim().toUpperCase(); showToast(`⟳ Moving to ${newStatus}...`);
+                    try {
+                        await fsBulkUpdateVehicle(vehicleId, { onTheRoad: false }, { shopStatus: newStatus });
+                        draggedIndexes.forEach(idx => { const v = fleetData.find(f => f.rowIndex === idx); if (v) sheetBackupWrite({ action: 'update', rowIndex: v.rowIndex, user: moveUser, id: v.id, status: v.status, issue: v.issue, date: v.date, shopStatus: newStatus, location: v.location, partsOrdered: v.partsOrdered || '', partsEta: v.partsEta || '', priority: v.priority || 'Normal', homeLocation: v.homeLocation || '', notes: v.notes || '', requestedBy: v.requestedBy || '', vehicleType: v.vehicleType || '', onTheRoad: false }); });
+                        showToast(`✓ Moved by ${moveUser}`);
+                    } catch (err) { showToast("❌ Failed: " + err.message); }
+                };
+                if (possibleStatuses.length === 1) applyStatusToAll(possibleStatuses[0]); else showStatusPickerMulti(firstVeh.id, possibleStatuses, applyStatusToAll);
+            }
+        }
+        document.querySelectorAll('.column-content').forEach(col => { col.addEventListener('dragover', onDragOver); col.addEventListener('dragleave', e => { if (!col.contains(e.relatedTarget)) { col.closest('.kanban-column').classList.remove('drag-over-column'); if (currentIndicator && col.contains(currentIndicator)) { currentIndicator.remove(); currentIndicator = null; } } }); col.addEventListener('drop', onDrop); });
+
+        // ==================== RENDER ====================
+        function formatDate(s) { if (!s) return ''; const p = s.split('-'); return p.length === 3 ? `${p[1]}/${p[2]}/${p[0]}` : s; }
+        function escapeHtml(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+        function renderBoard() {
+            const st = document.getElementById('searchInput').value.toLowerCase();
+            const cols = { on_the_road: document.getElementById('col-on-the-road'), complaints: document.getElementById('col-complaints'), ready: document.getElementById('col-ready'), parts: document.getElementById('col-parts'), progress: document.getElementById('col-progress'), returned: document.getElementById('col-returned') };
+            Object.values(cols).forEach(c => c.innerHTML = '');
+            const groups = { on_the_road: [], complaints: [], ready: [], parts: [], progress: [], returned: [] };
+
+            const getPrioVal = (p) => { if (p === 'Urgent') return 0; if (p === 'High') return 1; if (p === 'Oil Change / Bulb Replacement') return 2; return 3; };
+            const getCondVal = (c) => { if (c === 'Down') return 0; if (c === 'Warning') return 1; return 2; };
+
+            const vehicleGroups = {};
+            fleetData.forEach(v => {
+                if (!v.id) return;
+                if (st && !v.id.toLowerCase().includes(st) && !(v.issue || '').toLowerCase().includes(st)) return;
+                const idKey = v.id.trim().toUpperCase(); if (!vehicleGroups[idKey]) vehicleGroups[idKey] = []; vehicleGroups[idKey].push(v);
+            });
+
+            const mergedData = {};
+            for (const [idKey, rows] of Object.entries(vehicleGroups)) {
+                const activeRows = rows.filter(r => r.shopStatus !== 'Complete' || r.onTheRoad === true);
+                let colKey;
+                if (activeRows.length > 0) colKey = statusToCol(activeRows[0].shopStatus || 'Reported', activeRows[0].onTheRoad);
+                else colKey = statusToCol(rows[0].shopStatus || 'Reported', rows[0].onTheRoad);
+
+                if (!mergedData[colKey]) mergedData[colKey] = {};
+                mergedData[colKey][idKey] = { ...rows[0], tickets: rows };
+                const master = mergedData[colKey][idKey];
+                rows.forEach(v => {
+                    if (getPrioVal(v.priority) < getPrioVal(master.priority)) master.priority = v.priority;
+                    if (getCondVal(v.status) < getCondVal(master.status)) master.status = v.status;
+                    if (v.date && v.date < master.date) master.date = v.date;
+                });
+            }
+
+            for (const [colKey, vehicleMap] of Object.entries(mergedData)) groups[colKey] = Object.values(vehicleMap);
+            for (const col of Object.keys(groups)) {
+                if (col === 'on_the_road') groups[col].sort((a, b) => { const dA = a.inspectionDate ? new Date(a.inspectionDate) : new Date('9999-12-31'), dB = b.inspectionDate ? new Date(b.inspectionDate) : new Date('9999-12-31'); return dA - dB; });
+                else groups[col].sort((a, b) => { const pa = getPrioVal(a.priority), pb = getPrioVal(b.priority); return pa - pb; });
+            }
+
+            for (const [colKey, vehicles] of Object.entries(groups)) {
+                vehicles.forEach(v => {
+                    const tc = cols[colKey], sp = (colKey === 'parts');
+                    const prio = v.priority || 'Normal';
+                    let prioBadge = '', borderHighlight = 'border-gray-200';
+                    if (prio === 'Urgent') { prioBadge = '<span class="bg-red-50 text-red-600 border border-red-200 px-2 py-0.5 rounded text-[9px] font-bold uppercase">🔴 Urgent</span>'; borderHighlight = 'border-red-400 shadow-sm'; }
+                    else if (prio === 'High') { prioBadge = '<span class="bg-amber-50 text-amber-600 border border-amber-200 px-2 py-0.5 rounded text-[9px] font-bold uppercase">⚠ High</span>'; borderHighlight = 'border-amber-400'; }
+                    else if (prio === 'Oil Change / Bulb Replacement') { prioBadge = '<span class="bg-cyan-50 text-cyan-600 border border-cyan-200 px-2 py-0.5 rounded text-[9px] font-bold uppercase">🔧 Maint</span>'; }
+
+                    const typeBadge = v.vehicleType ? `<span class="bg-gray-100 text-gray-600 border border-gray-200 px-2 py-0.5 rounded text-[9px] font-bold uppercase">${v.vehicleType}</span>` : '';
+                    const condClass = v.status === 'Down' ? 'bg-red-50 text-red-600' : v.status === 'Warning' ? 'bg-orange-50 text-orange-600' : 'bg-green-50 text-green-600';
+
+                    const activeTickets = v.tickets.filter(t => t.shopStatus !== 'Complete' && t.onTheRoad !== true);
+                    const closedTickets = v.tickets.filter(t => t.shopStatus === 'Complete' || t.onTheRoad === true);
+                    const sortedActive = [...activeTickets].sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+
+                    let ticketsHtml = '<div class="space-y-2 mt-3">';
+                    sortedActive.forEach(t => {
+                        const reqHtml = t.requestedBy ? `<div class="text-[10px] text-gray-500 mt-1"><i class="ph-bold ph-user mr-1"></i>${escapeHtml(t.requestedBy)}</div>` : '';
+                        ticketsHtml += `
+                            <div class="p-3 border border-gray-100 rounded-lg bg-gray-50 hover:bg-gray-100 cursor-pointer transition-colors" onclick="event.stopPropagation(); openModal('edit', ${t.rowIndex})">
+                                <div class="text-xs text-black font-medium leading-snug">${escapeHtml(t.issue)}</div>
+                                ${reqHtml}
+                                <div class="flex gap-2 mt-2">
+                                    <span class="text-[9px] font-mono text-gray-500 bg-white border border-gray-200 px-1.5 py-0.5 rounded"><i class="ph-bold ph-calendar-blank mr-1"></i>${formatDate(t.date)}</span>
+                                    ${t.notes ? '<span class="text-[9px] font-mono text-gray-500 bg-white border border-gray-200 px-1.5 py-0.5 rounded"><i class="ph-bold ph-note text-black"></i></span>' : ''}
+                                </div>
+                            </div>`;
+                    });
+                    ticketsHtml += '</div>';
+
+                    let prevTicketsHtml = '';
+                    if (closedTickets.length > 0) {
+                        prevTicketsHtml = `
+                            <div class="mt-2 border border-gray-100 rounded-lg overflow-hidden bg-white" onclick="event.stopPropagation(); const l=this.querySelector('.pt-list'); l.classList.toggle('hidden'); this.querySelector('i').classList.toggle('rotate-90')">
+                                <div class="px-3 py-2 bg-gray-50 flex justify-between items-center cursor-pointer hover:bg-gray-100">
+                                    <span class="text-[10px] font-bold text-gray-500 uppercase tracking-wide">Previous Tickets (${closedTickets.length})</span>
+                                    <i class="ph-bold ph-caret-right text-gray-400 transition-transform"></i>
+                                </div>
+                                <div class="pt-list hidden p-2 space-y-1 max-h-32 overflow-y-auto custom-scroll">
+                                    ${closedTickets.map(t => `
+                                        <div class="flex justify-between items-center p-2 rounded bg-gray-50 hover:bg-gray-100 cursor-pointer" onclick="event.stopPropagation(); openModal('edit', ${t.rowIndex})">
+                                            <span class="text-[10px] text-gray-600 truncate mr-2 flex-1">${escapeHtml(t.issue || 'No issue')}</span>
+                                            <span class="text-[9px] font-mono text-gray-400 shrink-0">${formatDate(t.date)}</span>
+                                        </div>`).join('')}
+                                </div>
+                            </div>`;
+                    }
+
+                    let ph = '';
+                    if (sp) {
+                        ph = `<div class="mt-3 bg-orange-50 border border-orange-100 rounded-lg p-2 cursor-pointer" onclick="event.stopPropagation(); const d=this.querySelector('.pd'); d.classList.toggle('hidden');">
+                            <div class="flex justify-between items-center"><span class="text-[10px] font-bold uppercase text-orange-800"><i class="ph-bold ph-package mr-1"></i>Parts Info</span><i class="ph-bold ph-caret-down text-orange-400"></i></div>
+                            <div class="pd hidden mt-2 space-y-1 border-t border-orange-100 pt-2">
+                                <div class="flex justify-between text-[10px]"><span class="text-orange-600 font-bold">Ordered:</span><span class="font-mono text-orange-900">${formatDate(v.partsOrdered) || '—'}</span></div>
+                                <div class="flex justify-between text-[10px]"><span class="text-orange-600 font-bold">ETA:</span><span class="font-mono text-orange-900 font-bold">${formatDate(v.partsEta) || '—'}</span></div>
+                            </div>
+                        </div>`;
+                    }
+
+                    const allRowIndexes = v.tickets.map(t => t.rowIndex);
+                    const ck = String(v.id + '-' + colKey); const ic = collapsedCards.has(ck);
+                    const countBadge = v.tickets.length > 1 ? `<span class="bg-black text-white px-1.5 py-0.5 rounded text-[9px] font-bold ml-1">${v.tickets.length}</span>` : '';
+
+                    let ridesDateHtml = '';
+                    if (v.inspectionDate) {
+                        const rdStr = new Date(v.inspectionDate + 'T00:00:00').toLocaleDateString('en-US', {month:'short', day:'numeric'});
+                        ridesDateHtml = `<span class="bg-blue-50 text-blue-700 border border-blue-100 px-2 py-0.5 rounded text-[9px] font-bold"><i class="ph-bold ph-calendar-check mr-1"></i>RS: ${rdStr}</span>`;
+                    }
+
+                    const isLtd = (v.location || '').startsWith('LTD');
+                    const locIcon = isLtd ? 'ph-warning' : 'ph-map-pin';
+                    const locColor = isLtd ? 'text-amber-600' : 'text-gray-500';
+
+                    let streamNotes = '';
+                    const latestWithNotes = [...sortedActive].reverse().find(t => t.notes && t.notes.trim());
+                    if (latestWithNotes) {
+                        streamNotes = `<div class="mt-3 bg-yellow-50 border-l-2 border-yellow-400 p-2 text-[10px] text-yellow-800 italic rounded-r">📝 "${escapeHtml(latestWithNotes.notes.length > 100 ? latestWithNotes.notes.substring(0,100)+'...' : latestWithNotes.notes)}"</div>`;
+                    }
+
+                    const card = document.createElement('div');
+                    // rounded-lg matches Budget Portal card style
+                    card.className = `vehicle-card bg-white border ${borderHighlight} rounded-lg p-4 shadow-none hover:shadow-sm group relative mb-2 ${v.shopStatus==='Dispatched to Shop' ? 'border-red-400 ring-1 ring-red-100' : ''} ${ic ? 'collapsed' : ''}`;
+                    card.dataset.cardKey = ck; card.draggable = colKey !== 'on_the_road' && !isMobile();
+                    if (colKey !== 'on_the_road') { card.addEventListener('dragstart', e => onDragStart(e, allRowIndexes)); card.addEventListener('dragend', onDragEnd); }
+
+                    card.innerHTML = `
+                        <div class="flex justify-between items-start mb-2 cursor-pointer" onclick="toggleCard('${ck}',this.querySelector('.collapse-toggle'))">
+                            <div class="flex flex-col gap-1.5">
+                                <div class="flex items-center gap-2">
+                                    ${colKey !== 'on_the_road' ? `<div class="drag-handle text-gray-300 hover:text-gray-600 cursor-grab hidden md:block"><i class="ph-bold ph-dots-six-vertical text-lg"></i></div>` : ''}
+                                    <span class="font-mono font-bold text-black text-base">${escapeHtml(v.id)}</span>
+                                    ${typeBadge}${countBadge}
+                                </div>
+                                <div class="flex gap-2">
+                                    <span class="${condClass} border px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wide">${v.status || 'Operational'}</span>
+                                    ${prioBadge}
+                                </div>
+                            </div>
+                            <div class="flex flex-col items-end gap-2">
+                                <button class="collapse-toggle text-gray-400 hover:text-black p-1"><i class="ph-bold ph-caret-down transition-transform"></i></button>
+                                <button onclick="event.stopPropagation(); quickToggleRoad('${v.id}', ${JSON.stringify(allRowIndexes)}, ${v.onTheRoad === true})"
+                                    class="text-[9px] font-bold uppercase tracking-wide bg-gray-100 hover:bg-black hover:text-white text-gray-600 border border-gray-200 px-2 py-1 rounded transition-colors">
+                                    ${v.onTheRoad ? 'To Shop' : 'To Road'}
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="card-body">
+                            <div class="flex flex-wrap gap-2 mt-3 pt-3 border-t border-gray-100">
+                                <span class="bg-gray-100 text-gray-700 border border-gray-200 px-2 py-0.5 rounded text-[9px] font-bold uppercase"><i class="ph-bold ph-wrench mr-1"></i>${v.shopStatus || 'Reported'}</span>
+                                ${ridesDateHtml}
+                            </div>
+                            <div class="flex justify-between items-center mt-2 text-[10px] font-medium ${locColor}">
+                                <div class="flex items-center gap-1"><i class="ph-bold ${locIcon} text-sm"></i>${escapeHtml(v.location || 'On the Road')}</div>
+                                ${v.homeLocation ? `<div class="flex items-center gap-1 text-gray-400"><i class="ph-fill ph-house text-sm"></i>${escapeHtml(v.homeLocation)}</div>` : ''}
+                            </div>
+                            ${streamNotes}
+                            ${colKey !== 'on_the_road' ? ticketsHtml : ''}
+                            ${colKey !== 'on_the_road' ? prevTicketsHtml : ''}
+                            ${ph}
+                        </div>`;
+                    tc.appendChild(card);
+                });
+            }
+
+            Object.values(cols).forEach(el => {
+                if (!el.children.length) el.innerHTML = `<div class="flex flex-col items-center justify-center h-32 text-gray-400"><i class="ph-bold ph-check-square text-3xl mb-2 opacity-30"></i><span class="text-xs font-bold uppercase tracking-wide">Empty</span></div>`;
+            });
+
+            document.getElementById('count-col-road').innerText = groups.on_the_road.length;
+            document.getElementById('count-col-1').innerText = groups.complaints.length;
+            document.getElementById('count-col-2').innerText = groups.ready.length;
+            document.getElementById('count-col-3').innerText = groups.parts.length;
+            document.getElementById('count-col-4').innerText = groups.progress.length;
+            document.getElementById('count-col-5').innerText = groups.returned.length;
+
+            document.getElementById('kpi-total').innerText = groups.complaints.length;
+            document.getElementById('kpi-parts').innerText = groups.parts.length;
+            document.getElementById('kpi-complete').innerText = groups.returned.length;
+            document.getElementById('kpi-ready').innerText = groups.ready.length;
+
+            if (isMobile()) updateSwiperUI();
+        }
+
+        function toggleCard(k, b) { const c = b.closest('.vehicle-card'); if (collapsedCards.has(k)) { collapsedCards.delete(k); c.classList.remove('collapsed'); } else { collapsedCards.add(k); c.classList.add('collapsed'); } }
+        function toggleColumnCollapse(btn) { const col = btn.closest('.kanban-column'); col.classList.toggle('w-[52px]'); col.querySelector('.column-content').classList.toggle('hidden'); btn.querySelector('i').classList.toggle('ph-plus'); btn.querySelector('i').classList.toggle('ph-minus'); }
+        function togglePartsFields() { const s = document.getElementById('vShopStatus').value, sec = document.getElementById('partsSection'); if (s === "Awaiting part order") sec.classList.remove('hidden'); else sec.classList.add('hidden'); }
+
+        // ==================== MODALS ====================
+        function openModal(mode, ri = null) {
+            document.getElementById('entryModal').classList.remove('hidden'); document.getElementById('mode').value = mode; const d = document.getElementById('deleteBtn');
+            const storedUser = localStorage.getItem('dlx_username'); if(storedUser) document.getElementById('currentUser').value = storedUser;
+
+            if (mode === 'add') {
+                document.getElementById('modalTitle').innerText = "Add New Unit"; document.getElementById('vehicleForm').reset();
+                if(storedUser) document.getElementById('currentUser').value = storedUser;
+                document.getElementById('vID').readOnly = false; document.getElementById('vDate').valueAsDate = new Date();
+                document.getElementById('vPriority').value = 'Normal'; document.getElementById('vLocation').value = 'On the Road';
+                document.getElementById('vHistory').value = ''; document.getElementById('historyList').innerHTML = '<div class="text-center text-gray-400 p-2 italic">New ticket — no history</div>';
+                d.classList.add('hidden'); document.getElementById('printBtn').classList.add('hidden'); document.getElementById('closeRoadBtn').classList.add('hidden');
+                togglePartsFields();
+            } else {
+                document.getElementById('modalTitle').innerText = "Edit Unit"; d.classList.remove('hidden'); document.getElementById('printBtn').classList.remove('hidden'); document.getElementById('closeRoadBtn').classList.add('hidden');
+                const v = fleetData.find(v => v.rowIndex === ri);
+                if (v) {
+                    document.getElementById('targetRowIndex').value = v.rowIndex; document.getElementById('vID').value = v.id; document.getElementById('vStatus').value = v.status;
+                    document.getElementById('vIssue').value = v.issue; document.getElementById('vDate').value = v.date; document.getElementById('vInspectionDate').value = v.inspectionDate || "";
+                    document.getElementById('vShopStatus').value = v.shopStatus; document.getElementById('vLocation').value = v.location || "On the Road";
+                    document.getElementById('vPartsOrdered').value = v.partsOrdered || ""; document.getElementById('vPartsEta').value = v.partsEta || "";
+                    document.getElementById('vPriority').value = v.priority || "Normal"; document.getElementById('vHomeLocation').value = v.homeLocation || "";
+                    document.getElementById('vNotes').value = v.notes || ""; document.getElementById('vRequestedBy').value = v.requestedBy || "";
+                    document.getElementById('vType').value = v.vehicleType || ""; document.getElementById('vOnTheRoad').checked = v.onTheRoad === true;
+                    document.getElementById('vHistory').value = v.history || ""; const hist = parseHistory(v.history); renderHistoryLog(hist);
+                    if(hist.length > 0) document.getElementById('lastUpdatedBy').textContent = `Last: ${hist[hist.length-1].user}`; else document.getElementById('lastUpdatedBy').textContent = '';
+                    if (v.shopStatus !== 'Complete') document.getElementById('closeRoadBtn').classList.remove('hidden');
+                    togglePartsFields();
+                }
+            }
+        }
+        function closeModal() { document.getElementById('entryModal').classList.add('hidden'); }
+
+        function openAddTicketModal() {
+            const modal = document.getElementById('addTicketModal'); modal.classList.remove('hidden');
+            const storedUser = localStorage.getItem('dlx_username'); if (storedUser) document.getElementById('ticketUser').value = storedUser;
+            const datalist = document.getElementById('ticketVehicleList'); datalist.innerHTML = ''; const seen = new Set();
+            fleetData.forEach(v => {
+                if (!v.id) return; const idKey = v.id.trim().toUpperCase(); if (seen.has(idKey)) return; seen.add(idKey);
+                const opt = document.createElement('option'); opt.value = v.id.trim(); opt.label = `${v.id}${v.vehicleType ? ` (${v.vehicleType})` : ''}${v.onTheRoad ? ' — On the Road' : ''}`; datalist.appendChild(opt);
+            });
+            ['ticketVehicleInput','ticketIssue','ticketRequestedBy','ticketNotes'].forEach(id => document.getElementById(id).value = '');
+            document.getElementById('ticketPriority').value = 'Normal'; document.getElementById('ticketVehicleInfo').classList.add('hidden');
+        }
+        function closeAddTicketModal() { document.getElementById('addTicketModal').classList.add('hidden'); }
+
+        function onTicketVehicleInput() {
+            const rawId = document.getElementById('ticketVehicleInput').value.trim(), info = document.getElementById('ticketVehicleInfo');
+            if (!rawId) { info.classList.add('hidden'); return; }
+            const v = fleetData.find(f => f.id.trim().toUpperCase() === rawId.toUpperCase()); if (!v) { info.classList.add('hidden'); return; }
+            info.classList.remove('hidden');
+            document.getElementById('tvType').textContent = v.vehicleType ? `🚗 ${v.vehicleType}` : '';
+            document.getElementById('tvHome').textContent = v.homeLocation ? `🏠 ${v.homeLocation}` : '';
+            document.getElementById('tvCondition').textContent = `⚙ ${v.status || 'Operational'}`;
+            document.getElementById('tvInspection').textContent = v.inspectionDate ? `🚐 Insp: ${v.inspectionDate}` : '';
+        }
+
+        async function createTicketForVehicle() {
+            const rawId = document.getElementById('ticketVehicleInput').value.trim(), issue = document.getElementById('ticketIssue').value.trim(), userName = document.getElementById('ticketUser').value.trim();
+            if (!rawId || !issue || !userName) { showToast('⚠ Fill all required fields'); return; }
+            localStorage.setItem('dlx_username', userName);
+            const idKey = rawId.toUpperCase(), existing = fleetData.find(f => f.id.trim().toUpperCase() === idKey), activeTicket = fleetData.find(f => f.id.trim().toUpperCase() === idKey && f.onTheRoad !== true && f.shopStatus !== 'Complete');
+            const priority = document.getElementById('ticketPriority').value, requestedBy = document.getElementById('ticketRequestedBy').value.trim(), notes = document.getElementById('ticketNotes').value.trim(), today = new Date().toISOString().split('T')[0], newShopStatus = activeTicket ? activeTicket.shopStatus : 'Reported';
+            const btn = document.getElementById('createTicketBtn'); btn.innerHTML = '<i class="ph-bold ph-spinner animate-spin"></i> Creating...'; btn.disabled = true;
+
+            try {
+                const vehicleFields = { status: existing ? existing.status : 'Operational', vehicleType: existing ? (existing.vehicleType || '') : '', homeLocation: existing ? (existing.homeLocation || '') : '', inspectionDate: existing ? (existing.inspectionDate || '') : '', location: activeTicket ? (activeTicket.location || existing?.location || 'On the Road') : (existing ? (existing.location || 'On the Road') : 'On the Road') };
+                const ticketData = { issue, shopStatus: newShopStatus, priority, date: today, requestedBy, notes, partsOrdered: '', partsEta: '', history: [{ ts: Date.now(), user: userName, action: 'Created', desc: 'Ticket created via Add Ticket' }] };
+                await fsAddTicket(idKey, vehicleFields, ticketData);
+                sheetBackupWrite({ action: 'add', user: userName, id: existing ? existing.id : rawId, status: vehicleFields.status, issue, date: today, inspectionDate: vehicleFields.inspectionDate, shopStatus: newShopStatus, location: vehicleFields.location, partsOrdered: '', partsEta: '', priority, homeLocation: vehicleFields.homeLocation, notes, requestedBy, vehicleType: vehicleFields.vehicleType, onTheRoad: false, history: JSON.stringify(ticketData.history) });
+                showToast(activeTicket ? `✓ Added to existing ticket in ${newShopStatus}` : '✓ Ticket created');
+                closeAddTicketModal();
+            } catch (err) { showToast('❌ Error: ' + err.message); } finally { btn.innerHTML = '<i class="ph-bold ph-plus"></i> Create Ticket'; btn.disabled = false; }
+        }
+
+        async function saveVehicle(e) {
+            e.preventDefault(); const b = document.getElementById('saveBtn'), m = document.getElementById('mode').value, oldRi = parseInt(document.getElementById('targetRowIndex').value);
+            const id = document.getElementById('vID').value, status = document.getElementById('vStatus').value, issue = document.getElementById('vIssue').value, date = document.getElementById('vDate').value, shopStatus = document.getElementById('vShopStatus').value, location = document.getElementById('vLocation').value, partsOrdered = document.getElementById('vPartsOrdered').value, partsEta = document.getElementById('vPartsEta').value, priority = document.getElementById('vPriority').value, homeLocation = document.getElementById('vHomeLocation').value, notes = document.getElementById('vNotes').value, requestedBy = document.getElementById('vRequestedBy').value, vehicleType = document.getElementById('vType').value, inspectionDate = document.getElementById('vInspectionDate').value, rawHist = document.getElementById('vHistory').value, onTheRoad = document.getElementById('vOnTheRoad').checked;
+            let historyArr = parseHistory(rawHist);
+            if (m === 'add') { historyArr.push(createLogEntry('Created', 'Ticket created')); } else {
+                const oldV = fleetData.find(v => v.rowIndex == oldRi);
+                if(oldV) { if(oldV.shopStatus !== shopStatus) historyArr.push(createLogEntry('Status', `Changed to ${shopStatus}`)); if(oldV.priority !== priority) historyArr.push(createLogEntry('Priority', `Changed to ${priority}`)); if(oldV.notes !== notes && notes.length > (oldV.notes||'').length) historyArr.push(createLogEntry('Note', 'Note added/updated')); if(oldV.partsEta !== partsEta) historyArr.push(createLogEntry('ETA', `ETA: ${partsEta}`)); }
+            }
+            const user = getUsername();
+            let finalOnTheRoad = onTheRoad, finalShopStatus = shopStatus;
+            if (['Ready for Pickup', 'Dispatched to Shop', 'Received', 'Assessment', 'Repair in Progress', 'Awaiting part order', 'Parts Received - Waiting for Technician', 'Ready for Delivery', 'Complete'].includes(shopStatus) && shopStatus !== 'Reported') finalOnTheRoad = false;
+            if (onTheRoad && m === 'edit') { finalOnTheRoad = true; finalShopStatus = 'Complete'; historyArr.push(createLogEntry('Closed', 'Ticket closed, returned to On the Road')); }
+
+            b.innerHTML = '<i class="ph-bold ph-spinner animate-spin"></i> Saving...'; b.disabled = true;
+            try {
+                const vehicleUpdates = { status, vehicleType, homeLocation, inspectionDate, location, onTheRoad: finalOnTheRoad };
+                const ticketUpdates = { issue, shopStatus: finalShopStatus, priority, date, requestedBy, notes, partsOrdered, partsEta, history: historyArr };
+                if (m === 'edit') {
+                    if (finalOnTheRoad) { await fsBulkUpdateVehicle(id.trim().toUpperCase(), vehicleUpdates, { shopStatus: finalShopStatus }); await fsUpdateTicket(oldRi, {}, ticketUpdates); }
+                    else { await fsUpdateTicket(oldRi, vehicleUpdates, ticketUpdates); }
+                    sheetBackupWrite({ action: 'update', rowIndex: oldRi, user, id, status, issue, date, inspectionDate, shopStatus: finalShopStatus, location, partsOrdered, partsEta, priority, homeLocation, notes, requestedBy, vehicleType, onTheRoad: finalOnTheRoad, history: JSON.stringify(historyArr) });
+                } else {
+                    await fsAddTicket(id.trim().toUpperCase(), vehicleUpdates, ticketUpdates);
+                    sheetBackupWrite({ action: 'add', user, id, status, issue, date, inspectionDate, shopStatus: finalShopStatus, location, partsOrdered, partsEta, priority, homeLocation, notes, requestedBy, vehicleType, onTheRoad: finalOnTheRoad, history: JSON.stringify(historyArr) });
+                }
+                closeModal(); showToast("✓ Saved by " + user);
+            } catch (err) { showToast("❌ Failed to save"); } finally { b.innerText = "Save"; b.disabled = false; }
+        }
+
+        async function deleteCurrent() {
+            if (!confirm("Delete this ticket?")) return; const ri = parseInt(document.getElementById('targetRowIndex').value), b = document.getElementById('deleteBtn'), user = getUsername();
+            b.innerHTML = '<i class="ph-bold ph-spinner animate-spin"></i>';
+            try { await fsDeleteTicket(ri); sheetBackupWrite({ action: 'delete', rowIndex: ri, user }); closeModal(); showToast("🗑 Deleted"); } catch (err) { showToast("❌ Failed to delete"); b.innerHTML = '<i class="ph-bold ph-trash mr-1"></i> Delete'; }
+        }
+
+        async function closeAndReturnToRoadFromModal() {
+            const ri = parseInt(document.getElementById('targetRowIndex').value), v = fleetData.find(f => f.rowIndex === ri); if (!v) return;
+            const id = v.id.trim().toUpperCase(), mapping = firestoreMap[ri]; if (!mapping) return;
+            const otherActive = fleetData.filter(f => f.id.trim().toUpperCase() === id && f.rowIndex !== ri && f.shopStatus !== 'Complete' && f.onTheRoad !== true);
+            if (!confirm(otherActive.length > 0 ? `Close this ticket? (${otherActive.length} other active ticket(s) will remain open)` : 'Close this ticket and return vehicle to "On the Road"?')) return;
+            const user = getUsername(); closeModal(); showToast('⟳ Closing ticket...');
+            try {
+                await fsCloseTicket(id, mapping.ticketId, user);
+                sheetBackupWrite({ action: 'update', rowIndex: v.rowIndex, user, id: v.id, status: v.status, issue: v.issue || '', date: v.date || new Date().toISOString().split('T')[0], inspectionDate: v.inspectionDate || '', shopStatus: 'Complete', location: otherActive.length > 0 ? v.location : 'On the Road', partsOrdered: '', partsEta: '', priority: 'Normal', homeLocation: v.homeLocation || '', notes: v.notes || '', requestedBy: v.requestedBy || '', vehicleType: v.vehicleType || '', onTheRoad: otherActive.length === 0, history: '' });
+                showToast(otherActive.length > 0 ? `✓ Ticket closed` : `✓ Returned to road`);
+            } catch (err) { showToast("❌ Failed to close"); }
+        }
+
+        async function quickToggleRoad(vehicleId, rowIndexes, isCurrentlyOnRoad) {
+            const user = getUsername();
+            if (isCurrentlyOnRoad) { openAddTicketModal(); const input = document.getElementById('ticketVehicleInput'); if (input) { input.value = vehicleId; onTicketVehicleInput(); } return; }
+            if (!confirm(`Return ${vehicleId} to "On the Road"? This will close all active tickets.`)) return;
+            showToast('⟳ Returning to road...');
+            try {
+                await fsCloseAndReturnToRoad(vehicleId, user);
+                rowIndexes.forEach(idx => { const v = fleetData.find(f => f.rowIndex === idx); if (v) sheetBackupWrite({ action: 'update', rowIndex: v.rowIndex, user, id: v.id, status: 'Operational', issue: v.issue || '', date: v.date || new Date().toISOString().split('T')[0], inspectionDate: v.inspectionDate || '', shopStatus: 'Complete', location: 'On the Road', partsOrdered: '', partsEta: '', priority: 'Normal', homeLocation: v.homeLocation || '', notes: v.notes || '', requestedBy: v.requestedBy || '', vehicleType: v.vehicleType || '', onTheRoad: true, history: '' }); });
+                showToast(`✓ ${vehicleId} returned to road`);
+            } catch (err) { showToast('❌ Failed'); }
+        }
+
+        async function closeAndReturnToRoad(rowIndexes) {
+            if (!confirm('Close ALL tickets and return vehicle to "On the Road"?')) return;
+            const user = getUsername(); showToast('⟳ Returning to road...');
+            const firstV = fleetData.find(f => f.rowIndex === rowIndexes[0]); if (!firstV) return;
+            try {
+                await fsCloseAndReturnToRoad(firstV.id.trim().toUpperCase(), user);
+                rowIndexes.forEach(idx => { const v = fleetData.find(f => f.rowIndex === idx); if (v) sheetBackupWrite({ action: 'update', rowIndex: v.rowIndex, user, id: v.id, status: 'Operational', issue: v.issue || '', date: v.date || new Date().toISOString().split('T')[0], inspectionDate: v.inspectionDate || '', shopStatus: 'Complete', location: 'On the Road', partsOrdered: '', partsEta: '', priority: 'Normal', homeLocation: v.homeLocation || '', notes: v.notes || '', requestedBy: v.requestedBy || '', vehicleType: v.vehicleType || '', onTheRoad: true, history: '' }); });
+                showToast(`✓ Vehicle on the road`);
+            } catch (err) { showToast("❌ Failed to close"); }
+        }
+
+        // ==================== LOGBOOK & BULLETIN ====================
+        let logbookFilter = 'all';
+        function toggleLogbook() { const p = document.getElementById('logbookPanel'), o = document.getElementById('logbookOverlay'); p.classList.toggle('open'); o.classList.toggle('open'); if(p.classList.contains('open')) renderLogbook(); }
+        function setLogbookFilter(filter, btn) { logbookFilter = filter; document.querySelectorAll('.logbook-filter-btn').forEach(b => { b.classList.remove('bg-black','text-white'); b.classList.add('border','border-gray-200','text-gray-600'); }); btn.classList.add('bg-black','text-white'); btn.classList.remove('border','border-gray-200','text-gray-600'); renderLogbook(); }
+        function getActionTag(desc) { const d = (desc || '').toLowerCase(); if (d.includes('created') || d.includes('new ticket')) return '<span class="bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded ml-2 text-[9px] uppercase font-bold">New</span>'; if (d.includes('status')) return '<span class="bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded ml-2 text-[9px] uppercase font-bold">Status</span>'; if (d.includes('closed') || d.includes('complete')) return '<span class="bg-green-100 text-green-700 px-1.5 py-0.5 rounded ml-2 text-[9px] uppercase font-bold">Closed</span>'; return '<span class="bg-gray-200 text-gray-700 px-1.5 py-0.5 rounded ml-2 text-[9px] uppercase font-bold">Update</span>'; }
+
+        function renderLogbook() {
+            const feed = document.getElementById('logbookFeed'); let entries = [];
+            fleetData.forEach(v => { if (!v.id) return; const hist = parseHistory(v.history); hist.forEach(h => entries.push({ vehicleId: v.id, ts: h.ts, user: h.user || 'System', desc: h.desc || h.action || '' })); });
+            entries.sort((a, b) => b.ts - a.ts);
+            const now = new Date();
+            if (logbookFilter === 'today') { const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime(); entries = entries.filter(e => e.ts >= startOfDay); }
+            else if (logbookFilter === 'week') { const weekAgo = now.getTime() - 7 * 24 * 60 * 60 * 1000; entries = entries.filter(e => e.ts >= weekAgo); }
+
+            if (!entries.length) { feed.innerHTML = `<div class="flex flex-col items-center justify-center h-48 text-gray-400"><i class="ph-bold ph-book-open text-4xl mb-2 opacity-30"></i><span class="text-sm font-bold">No activity</span></div>`; return; }
+
+            let html = '', lastDateStr = '';
+            entries.slice(0, 200).forEach(e => {
+                const date = new Date(e.ts), dateStr = date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+                if (dateStr !== lastDateStr) { html += `<div class="text-xs font-bold text-gray-400 uppercase tracking-widest mt-4 mb-2 pl-2">${dateStr}</div>`; lastDateStr = dateStr; }
+                const timeStr = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                html += `<div class="bg-white border border-gray-200 rounded-lg p-3 mb-2"><div class="flex justify-between items-center mb-1"><span class="font-mono font-bold text-black text-sm">${escapeHtml(e.vehicleId)}${getActionTag(e.desc)}</span><span class="text-[10px] text-gray-400 font-mono">${timeStr}</span></div><div class="text-xs font-bold text-gray-600 mb-0.5"><i class="ph-fill ph-user mr-1 text-gray-400"></i>${escapeHtml(e.user)}</div><div class="text-xs text-gray-800">${escapeHtml(e.desc)}</div></div>`;
+            });
+            feed.innerHTML = html;
+        }
+
+        let bulletinMessages = [];
+        function loadBulletin() { try { bulletinMessages = JSON.parse(localStorage.getItem('dlx_bulletin_messages')) || []; } catch { bulletinMessages = []; } const sa = localStorage.getItem('dlx_bulletin_author'); if (sa) document.getElementById('msgAuthor').value = sa; renderBulletin(); updateBadge(); }
+        function saveBulletin() { localStorage.setItem('dlx_bulletin_messages', JSON.stringify(bulletinMessages)); }
+        function toggleBulletin() { const p = document.getElementById('bulletinPanel'), o = document.getElementById('bulletinOverlay'); p.classList.toggle('open'); o.classList.toggle('open'); if(!p.classList.contains('open')) { document.getElementById('bulletinToggle').querySelector('span').classList.add('hidden'); localStorage.setItem('dlx_bulletin_seen', String(bulletinMessages.length)); updateBadge(); } }
+        function updateBadge() { const seen = parseInt(localStorage.getItem('dlx_bulletin_seen') || '0'), unseen = Math.max(0, bulletinMessages.length - seen), badge = document.getElementById('msgCount'); if (unseen > 0) { badge.textContent = unseen; badge.classList.remove('hidden'); } else { badge.classList.add('hidden'); } }
+        function postMessage() { const a = document.getElementById('msgAuthor').value.trim(), body = document.getElementById('msgBody').value.trim(), pr = document.getElementById('msgPriority').value; if (!body) return; bulletinMessages.unshift({ id: Date.now() + '_' + Math.random().toString(36).substr(2, 5), author: a || 'Anonymous', body, priority: pr, time: new Date().toISOString(), pinned: false }); saveBulletin(); localStorage.setItem('dlx_bulletin_author', bulletinMessages[0].author); localStorage.setItem('dlx_bulletin_seen', String(bulletinMessages.length)); document.getElementById('msgBody').value = ''; document.getElementById('postBtn').disabled = true; renderBulletin(); showToast("📌 Posted"); }
+        function deleteMessage(id) { bulletinMessages = bulletinMessages.filter(m => m.id !== id); saveBulletin(); renderBulletin(); updateBadge(); }
+        function togglePin(id) { const m = bulletinMessages.find(m => m.id === id); if (m) { m.pinned = !m.pinned; saveBulletin(); renderBulletin(); } }
+        function renderBulletin() { const f = document.getElementById('bulletinFeed'); if (!bulletinMessages.length) { f.innerHTML = `<div class="flex flex-col items-center justify-center h-48 text-gray-400"><i class="ph-bold ph-push-pin text-4xl mb-2 opacity-30"></i><span class="text-sm font-bold">No messages</span></div>`; return; } const sorted = [...bulletinMessages].sort((a, b) => (a.pinned && !b.pinned) ? -1 : (!a.pinned && b.pinned) ? 1 : 0); f.innerHTML = sorted.map(m => { const prioColor = m.priority==='urgent' ? 'bg-red-100 text-red-700' : m.priority==='heads-up' ? 'bg-orange-100 text-orange-700' : m.priority==='info' ? 'bg-blue-100 text-blue-700' : 'bg-gray-200 text-gray-700'; return `<div class="bg-white border ${m.pinned ? 'border-amber-400 ring-1 ring-amber-100 shadow-sm' : 'border-gray-200'} rounded-lg p-3 relative group"><div class="flex justify-between items-start mb-2"><div class="flex items-center gap-2"><span class="text-xs font-bold text-black">${escapeHtml(m.author)}</span><span class="${prioColor} px-1.5 py-0.5 rounded text-[9px] uppercase font-bold tracking-wide">${m.priority.replace('-',' ')}</span></div><span class="text-[9px] text-gray-400 font-mono">${new Date(m.time).toLocaleDateString()}</span></div><p class="text-sm text-gray-800 leading-snug mb-2">${escapeHtml(m.body)}</p><div class="flex justify-end gap-2"><button onclick="togglePin('${m.id}')" class="text-xs ${m.pinned ? 'text-amber-500' : 'text-gray-300 hover:text-amber-500'}"><i class="ph-bold ph-push-pin"></i></button><button onclick="deleteMessage('${m.id}')" class="text-xs text-gray-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"><i class="ph-bold ph-trash"></i></button></div></div>`; }).join(''); }
+        document.getElementById('msgBody').addEventListener('input', function () { document.getElementById('postBtn').disabled = !this.value.trim(); });
+
+        // ==================== PRINT ====================
+        function showPrintPreview(vehicle, allTickets) {
+            const tickets = allTickets || [vehicle]; document.querySelectorAll('.print-overlay').forEach(e => e.remove());
+            const overlay = document.createElement('div'); overlay.className = 'print-overlay z-[200] overflow-y-auto custom-scroll';
+            let ticketRows = tickets.map(t => `<tr class="border-b border-gray-200 text-sm"><td class="py-2 pr-4 font-medium">${escapeHtml(t.issue)}</td><td class="py-2 pr-4">${t.shopStatus || ''}</td><td class="py-2 pr-4 font-mono">${formatDate(t.date)}</td><td class="py-2 pr-4">${escapeHtml(t.requestedBy || '—')}</td><td class="py-2">${t.priority || 'Normal'}</td></tr>`).join('');
+            const hist = parseHistory(vehicle.history); let historyRows = '';
+            if (hist.length) { const sorted = [...hist].sort((a, b) => b.ts - a.ts); historyRows = sorted.map(h => { const d = new Date(h.ts); return `<tr class="border-b border-gray-100 text-xs"><td class="py-1 font-mono text-gray-500 w-32">${d.toLocaleDateString()} ${d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}</td><td class="py-1 font-bold w-32">${h.user}</td><td class="py-1">${h.desc}</td></tr>`; }).join(''); }
+            const allNotes = tickets.map(t => t.notes).filter(n => n && n.trim()), notesHtml = allNotes.length ? allNotes.join('<br><br>') : '<span class="text-gray-400 italic">No notes</span>';
+            overlay.innerHTML = `
+                <div class="max-w-4xl mx-auto my-8 bg-white p-8 border border-black shadow-2xl relative">
+                    <div class="print-actions absolute top-4 right-4 flex gap-2">
+                        <button class="px-4 py-2 bg-black text-white font-bold rounded-md text-sm hover:bg-gray-800" onclick="window.print()"><i class="ph-bold ph-printer mr-1"></i> Print</button>
+                        <button class="px-4 py-2 bg-white border border-gray-300 text-black font-bold rounded-md text-sm hover:bg-gray-50" onclick="this.closest('.print-overlay').remove()"><i class="ph-bold ph-x mr-1"></i> Close</button>
+                    </div>
+                    <div class="border-b-4 border-black pb-4 mb-6">
+                        <h2 class="text-3xl font-bold uppercase tracking-widest text-black flex items-center gap-3"><i class="ph-bold ph-wrench"></i> Service Ticket</h2>
+                        <div class="text-sm font-bold text-gray-500 mt-1 uppercase tracking-widest">ID: <span class="text-black text-xl ml-2 font-mono">${escapeHtml(vehicle.id)}</span></div>
+                    </div>
+                    <div class="grid grid-cols-2 md:grid-cols-4 gap-6 mb-8">
+                        <div><div class="text-xs font-bold text-gray-400 uppercase tracking-widest mb-1">Type</div><div class="font-bold text-black">${vehicle.vehicleType || '—'}</div></div>
+                        <div><div class="text-xs font-bold text-gray-400 uppercase tracking-widest mb-1">Condition</div><div class="font-bold text-black">${vehicle.status || '—'}</div></div>
+                        <div><div class="text-xs font-bold text-gray-400 uppercase tracking-widest mb-1">Location</div><div class="font-bold text-black">${vehicle.location || 'On the Road'}</div></div>
+                        <div><div class="text-xs font-bold text-gray-400 uppercase tracking-widest mb-1">Home</div><div class="font-bold text-black">${vehicle.homeLocation || '—'}</div></div>
+                        <div><div class="text-xs font-bold text-gray-400 uppercase tracking-widest mb-1">Priority</div><div class="font-bold text-black">${vehicle.priority || 'Normal'}</div></div>
+                        <div><div class="text-xs font-bold text-gray-400 uppercase tracking-widest mb-1">Date In</div><div class="font-mono font-bold text-black">${formatDate(vehicle.date)}</div></div>
+                        <div><div class="text-xs font-bold text-gray-400 uppercase tracking-widest mb-1">Inspection</div><div class="font-mono font-bold text-black">${vehicle.inspectionDate ? formatDate(vehicle.inspectionDate) : '—'}</div></div>
+                        <div><div class="text-xs font-bold text-gray-400 uppercase tracking-widest mb-1">Parts ETA</div><div class="font-mono font-bold text-black">${vehicle.partsEta ? formatDate(vehicle.partsEta) : '—'}</div></div>
+                    </div>
+                    <div class="mb-8"><h3 class="text-lg font-bold text-black border-b-2 border-gray-200 pb-2 mb-4 uppercase tracking-widest">Work Items (${tickets.length})</h3><table class="w-full text-left border-collapse"><thead><tr class="text-xs text-gray-400 uppercase tracking-widest border-b border-black"><th class="pb-2 font-bold">Issue</th><th class="pb-2 font-bold">Status</th><th class="pb-2 font-bold">Date</th><th class="pb-2 font-bold">Requested By</th><th class="pb-2 font-bold">Priority</th></tr></thead><tbody>${ticketRows}</tbody></table></div>
+                    <div class="mb-8"><h3 class="text-lg font-bold text-black border-b-2 border-gray-200 pb-2 mb-4 uppercase tracking-widest">Notes</h3><div class="bg-gray-50 p-4 border border-gray-200 rounded-lg text-sm text-gray-800">${notesHtml}</div></div>
+                    ${historyRows ? `<div><h3 class="text-lg font-bold text-black border-b-2 border-gray-200 pb-2 mb-4 uppercase tracking-widest">Activity Log</h3><table class="w-full text-left border-collapse"><tbody>${historyRows}</tbody></table></div>` : ''}
+                    <div class="mt-12 pt-4 border-t border-gray-300 flex justify-between text-xs text-gray-400 font-mono font-bold uppercase"><span>Printed: ${new Date().toLocaleString()}</span><span>Repair Tracker</span></div>
+                </div>`;
+            document.body.appendChild(overlay);
+        }
+        function printServiceTicket(rowIndex) { const v = fleetData.find(f => f.rowIndex === rowIndex); if (v) showPrintPreview(v); else showToast('❌ Not found'); }
+        function printServiceTicketFromSearch() { const search = document.getElementById('searchInput').value.trim(); if (!search) { showToast('Enter Vehicle ID to search first'); return; } const matches = fleetData.filter(v => v.id.toLowerCase().includes(search.toLowerCase())); if (!matches.length) { showToast('❌ No matches'); return; } const id = matches[0].id; const allTickets = fleetData.filter(v => v.id.trim().toUpperCase() === id.trim().toUpperCase()); showPrintPreview(allTickets[0], allTickets); }
+
+        // ==================== UTILITIES ====================
+        function showToast(msg) { document.querySelectorAll('.toast').forEach(e => e.remove()); const t = document.createElement('div'); t.className = 'toast fixed bottom-6 right-6 bg-black text-white px-4 py-3 rounded-lg shadow-2xl font-bold text-sm z-[300] flex items-center gap-2'; t.innerHTML = `<i class="ph-bold ph-info text-lg"></i>${msg}`; document.body.appendChild(t); setTimeout(() => { t.style.opacity = '0'; t.style.transition = 'opacity 0.3s ease'; setTimeout(()=>t.remove(),300); }, 3000); }
+        document.addEventListener('keydown', e => { if (e.key === 'Escape') { closeModal(); closeAddTicketModal(); document.querySelectorAll('.print-overlay').forEach(el => el.remove()); const lp = document.getElementById('logbookPanel'); if(lp && lp.classList.contains('open')) toggleLogbook(); const bp = document.getElementById('bulletinPanel'); if(bp && bp.classList.contains('open')) toggleBulletin(); } });
+
+        setInterval(() => { const el = document.getElementById('current-date-display'); if(el) el.textContent = new Date().toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'}); }, 60000);
+        document.getElementById('current-date-display').textContent = new Date().toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'});
+
+        // Init
+        initSwiperDots();
+        initFirestoreListener();
+        loadBulletin();
+        updateSidebarUser();
+    </script>
+</body>
+</html>
