@@ -1,0 +1,391 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Employee Hub</title>
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        .scrollbar-hide::-webkit-scrollbar { display: none; }
+        .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+
+        .custom-scroll::-webkit-scrollbar { width: 4px; }
+        .custom-scroll::-webkit-scrollbar-track { background: transparent; }
+        .custom-scroll::-webkit-scrollbar-thumb { background: #e5e7eb; border-radius: 4px; }
+        .custom-scroll:hover::-webkit-scrollbar-thumb { background: #9ca3af; }
+        
+        .app-card { transition: all 0.1s ease-in-out; }
+        .app-card:active { transform: scale(0.99); background-color: #f9fafb; }
+    </style>
+</head>
+<body class="antialiased text-black bg-white">
+
+    <div class="flex h-screen overflow-hidden relative">
+        
+        <div id="auth-layer" class="fixed inset-0 z-[100] bg-white flex items-center justify-center p-4 transition-opacity duration-300">
+            <div class="bg-white w-full max-w-md p-8 rounded-lg border border-black shadow-none">
+                <div class="text-center mb-8">
+                    <div class="inline-flex items-center justify-center w-12 h-12 rounded-full bg-black text-white mb-4">
+                        <i class="ph-fill ph-taxi text-2xl"></i>
+                    </div>
+                    <h2 id="auth-title" class="text-2xl font-bold text-black">Employee Login</h2>
+                    <p id="auth-subtitle" class="text-sm text-gray-500 mt-2">Sign in to access your tools</p>
+                </div>
+                
+                <form id="auth-form" class="space-y-6">
+                    <div id="name-field" class="hidden">
+                        <label class="block text-sm font-bold text-black mb-1">Full Name</label>
+                        <input type="text" id="auth-name" class="w-full rounded-md border-gray-300 border p-2.5 text-sm focus:ring-0 focus:border-black transition-all" placeholder="John Doe">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-bold text-black mb-1">Email Address</label>
+                        <input type="email" id="auth-email" class="w-full rounded-md border-gray-300 border p-2.5 text-sm focus:ring-0 focus:border-black transition-all" placeholder="name@oregontaxi.com" required>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-bold text-black mb-1">Password</label>
+                        <input type="password" id="auth-password" class="w-full rounded-md border-gray-300 border p-2.5 text-sm focus:ring-0 focus:border-black transition-all" placeholder="••••••••" required>
+                    </div>
+                    <button type="submit" id="auth-submit-btn" class="w-full bg-black hover:bg-gray-800 text-white font-medium py-2.5 rounded-md transition-colors flex justify-center items-center">
+                        <span id="auth-submit-text">Sign In</span>
+                    </button>
+                </form>
+                
+                <div class="mt-6 pt-6 border-t border-gray-100 text-center flex flex-col space-y-3">
+                    <button onclick="toggleAuthMode()" id="auth-toggle-btn" class="text-xs font-bold text-gray-500 hover:text-black transition-colors">
+                        Need an account? Register here.
+                    </button>
+                    <div id="auth-message" class="hidden p-3 text-xs rounded border text-center font-medium"></div>
+                </div>
+            </div>
+        </div>
+
+        <aside class="flex flex-col flex-shrink-0 w-20 md:w-64 bg-white border-r border-black z-30">
+            <div class="flex items-center justify-center md:justify-start md:px-6 h-16 border-b border-black flex-shrink-0 bg-gray-50 w-full">
+                <i class="ph-fill ph-squares-four text-3xl text-black"></i>
+                <span class="ml-2 text-lg font-bold hidden md:block tracking-tight">Hub</span>
+            </div>
+            
+            <div class="flex-1 overflow-y-auto custom-scroll p-4 space-y-2">
+                <div class="text-xs font-bold text-gray-400 uppercase tracking-wide mb-3 hidden md:block">Navigation</div>
+                <button class="w-full flex items-center justify-center md:justify-start p-2 rounded-md bg-black text-white transition-colors">
+                    <i class="ph-bold ph-app-window text-lg"></i>
+                    <span class="ml-3 text-sm font-bold hidden md:block">Applications</span>
+                </button>
+                <button class="w-full flex items-center justify-center md:justify-start p-2 rounded-md bg-white text-gray-600 hover:bg-gray-100 hover:text-black transition-colors">
+                    <i class="ph-bold ph-address-book text-lg"></i>
+                    <span class="ml-3 text-sm font-bold hidden md:block">Directory</span>
+                </button>
+                <button class="w-full flex items-center justify-center md:justify-start p-2 rounded-md bg-white text-gray-600 hover:bg-gray-100 hover:text-black transition-colors">
+                    <i class="ph-bold ph-gear text-lg"></i>
+                    <span class="ml-3 text-sm font-bold hidden md:block">Settings</span>
+                </button>
+            </div>
+
+            <div class="p-4 border-t border-black flex items-center justify-center md:justify-between bg-white">
+                <div class="flex items-center overflow-hidden">
+                    <div class="h-8 w-8 flex-shrink-0 rounded-full bg-black flex items-center justify-center text-white font-bold text-xs" id="user-avatar">?</div>
+                    <div class="hidden md:flex flex-col ml-2 min-w-0">
+                        <span id="logged-user-name" class="text-xs font-bold text-black truncate w-32">Guest</span>
+                        <span id="user-role" class="text-[9px] uppercase tracking-wider text-gray-500">Waiting</span>
+                    </div>
+                </div>
+                <button onclick="logout()" class="text-gray-400 hover:text-red-600 ml-2 flex-shrink-0" title="Logout">
+                    <i class="ph-bold ph-sign-out text-lg"></i>
+                </button>
+            </div>
+        </aside>
+
+        <main class="flex-1 flex flex-col h-full overflow-hidden bg-gray-50 relative z-10">
+            <div class="flex-1 overflow-y-auto p-4 sm:p-8">
+                
+                <header class="flex flex-col sm:flex-row sm:items-end justify-between mb-8 pb-4 border-b border-gray-200">
+                    <div>
+                        <h1 class="text-2xl font-bold text-black tracking-tight">Applications</h1>
+                        <p class="text-sm text-gray-500 mt-1">Select a tool to launch</p>
+                    </div>
+                    <div class="mt-4 sm:mt-0">
+                        <div class="relative">
+                            <i class="ph ph-magnifying-glass absolute left-3 top-2.5 text-gray-400 text-lg"></i>
+                            <input type="text" id="app-search" placeholder="Search tools..." class="w-full sm:w-64 bg-white border border-gray-300 text-black text-sm rounded-md pl-10 p-2 focus:border-black focus:ring-0">
+                        </div>
+                    </div>
+                </header>
+
+                <div id="apps-container" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5"></div>
+
+                <div id="no-apps-message" class="hidden flex flex-col items-center justify-center h-64 text-center">
+                    <div class="bg-gray-200 p-4 rounded-full inline-block mb-4">
+                        <i class="ph-fill ph-lock-key text-3xl text-gray-500"></i>
+                    </div>
+                    <h2 class="text-lg font-bold text-black">No Applications Available</h2>
+                    <p class="text-gray-500 text-sm mt-1">Your current role does not have access to any tools.</p>
+                </div>
+
+            </div>
+        </main>
+    </div>
+
+    <script type="module">
+        import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
+
+        // ⚠️ UPDATE THESE 3 VARIABLES WITH YOUR ACTUAL URLS AND KEYS
+        const SUPABASE_URL = 'https://ioofrqvykvgshqybzjiu.supabase.co';
+        const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imlvb2ZycXZ5a3Znc2hxeWJ6aml1Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3NDk2NzE3NywiZXhwIjoyMDkwNTQzMTc3fQ.Rez8dtNIQWXUsyPZ3L93_-hitgbEbjw-RmCUZGEjPVQ';
+        const CLOUDFLARE_WORKER_URL = 'https://ot-tools.oregontaxieugene.workers.dev';
+        const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+        const applications = [
+            {
+                id: 'sms',
+                name: 'SMS Tool',
+                description: 'Our texting tool for communication with deluxe and direct medical drivers.',
+                icon: 'ph-chat-circle-text',
+                url: '/smstool',
+                allowedRoles: ['admin', 'dispatcher', 'driver']
+            },
+            {
+                id: 'account-balances',
+                name: 'Account Balances',
+                description: 'View balances and accounts.',
+                icon: 'ph-wallet',
+                url: '/accountsbalances',
+                allowedRoles: ['admin', 'finance', 'dispatcher']
+            },
+            {
+                id: 'financial-dashboard',
+                name: 'Financial Dashboard',
+                description: 'For viewing Margins and Profits.',
+                icon: 'ph-chart-line-up',
+                url: '/financialdashboard',
+                allowedRoles: ['admin', 'finance', 'management']
+            },
+            {
+                id: 'repair-tracker',
+                name: 'Repair Tracker',
+                description: 'For our shop to track and monitor vehicle maintenance and repairs.',
+                icon: 'ph-wrench',
+                url: '/repairtracker',
+                allowedRoles: ['admin', 'shop', 'maintenance', 'dispatcher']
+            }
+        ];
+
+        window.state = {
+            isLoginMode: true,
+            currentUser: null,
+            searchQuery: ''
+        };
+
+        // --- Toggle between Login and Registration UI ---
+        window.toggleAuthMode = function() {
+            window.state.isLoginMode = !window.state.isLoginMode;
+            
+            document.getElementById('auth-title').textContent = window.state.isLoginMode ? 'Employee Login' : 'Create Account';
+            document.getElementById('auth-subtitle').textContent = window.state.isLoginMode ? 'Sign in to access your tools' : 'Register for the employee hub';
+            document.getElementById('auth-submit-text').textContent = window.state.isLoginMode ? 'Sign In' : 'Register';
+            document.getElementById('auth-toggle-btn').textContent = window.state.isLoginMode ? 'Need an account? Register here.' : 'Already have an account? Sign in.';
+            document.getElementById('auth-message').classList.add('hidden');
+            
+            const nameField = document.getElementById('name-field');
+            const nameInput = document.getElementById('auth-name');
+            if (window.state.isLoginMode) {
+                nameField.classList.add('hidden');
+                nameInput.removeAttribute('required');
+            } else {
+                nameField.classList.remove('hidden');
+                nameInput.setAttribute('required', 'true');
+            }
+        };
+
+        function showMessage(text, type) {
+            const msgDiv = document.getElementById('auth-message');
+            msgDiv.textContent = text;
+            msgDiv.className = `p-3 text-xs rounded border text-center font-medium mt-4 block ${
+                type === 'error' ? 'bg-red-50 text-red-600 border-red-200' : 'bg-green-50 text-green-700 border-green-200'
+            }`;
+        }
+
+        // --- Handle Form Submission (Login & Register) ---
+        document.getElementById('auth-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const name = document.getElementById('auth-name').value.trim();
+            const email = document.getElementById('auth-email').value.trim().toLowerCase();
+            const password = document.getElementById('auth-password').value;
+            const submitBtn = document.getElementById('auth-submit-text');
+            const btnContainer = document.getElementById('auth-submit-btn');
+            
+            document.getElementById('auth-message').classList.add('hidden');
+            
+            submitBtn.textContent = 'Processing...';
+            btnContainer.classList.add('opacity-75', 'cursor-not-allowed');
+            btnContainer.disabled = true;
+
+            try {
+                if (window.state.isLoginMode) {
+                    // --- REAL SUPABASE LOGIN ---
+                    const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+                        email: email,
+                        password: password,
+                    });
+
+                    if (authError) throw authError;
+
+                    // Fetch the user's role from the custom profiles table
+                    const { data: profile, error: profileError } = await supabase
+                        .from('profiles')
+                        .select('full_name, role')
+                        .eq('id', authData.user.id)
+                        .single();
+
+                    if (profileError) throw new Error("Logged in, but could not load user profile details. Check profiles table.");
+
+                    window.state.currentUser = {
+                        email: authData.user.email,
+                        name: profile.full_name || email.split('@')[0],
+                        role: profile.role || 'employee' // fallback if role is empty
+                    };
+
+                    loginSuccess();
+
+                } else {
+                    // --- CLOUDFLARE WORKER REGISTRATION ---
+                    const res = await fetch(`${CLOUDFLARE_WORKER_URL}/api/register`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ email, password, name })
+                    });
+                    
+                    const rawText = await res.text();
+console.log("Server responded with:", rawText);
+const result = JSON.parse(rawText);
+                    
+                    if (!res.ok) throw new Error(result.error || 'Registration failed');
+
+                    showMessage('Account created successfully! You may now sign in.', 'success');
+                    document.getElementById('auth-password').value = '';
+                    
+                    // Delay slightly so user can read the success message
+                    setTimeout(() => {
+                        window.toggleAuthMode();
+                        showMessage('Account created successfully! You may now sign in.', 'success');
+                    }, 1500);
+                }
+            } catch (err) {
+                showMessage(err.message, 'error');
+            } finally {
+                submitBtn.textContent = window.state.isLoginMode ? 'Sign In' : 'Register';
+                btnContainer.classList.remove('opacity-75', 'cursor-not-allowed');
+                btnContainer.disabled = false;
+            }
+        });
+
+        // --- Session Persistence (Auto-login on page refresh) ---
+        async function checkSession() {
+            const { data: { session } } = await supabase.auth.getSession();
+            if (session) {
+                const { data: profile } = await supabase
+                    .from('profiles')
+                    .select('full_name, role')
+                    .eq('id', session.user.id)
+                    .single();
+
+                if (profile) {
+                    window.state.currentUser = {
+                        email: session.user.email,
+                        name: profile.full_name,
+                        role: profile.role || 'employee'
+                    };
+                    loginSuccess();
+                }
+            }
+        }
+        
+        checkSession();
+
+        // --- UI Updates After Successful Login ---
+        function loginSuccess() {
+            // Hide the auth layer
+            document.getElementById('auth-layer').style.opacity = '0';
+            setTimeout(() => { document.getElementById('auth-layer').classList.add('hidden'); }, 300);
+
+            // Format Name and Initials for Sidebar
+            const parts = window.state.currentUser.name.split(' ');
+            const formattedName = parts.map(p => p.charAt(0).toUpperCase() + p.slice(1)).join(' ');
+            
+            document.getElementById('logged-user-name').textContent = formattedName;
+            document.getElementById('user-role').textContent = window.state.currentUser.role;
+            
+            let initials = formattedName.substring(0, 2).toUpperCase();
+            if (parts.length > 1) initials = (parts[0][0] + parts[1][0]).toUpperCase();
+            document.getElementById('user-avatar').textContent = initials;
+
+            renderApps();
+        }
+
+        // --- Handle Logout ---
+        window.logout = async function() {
+            await supabase.auth.signOut();
+            window.state.currentUser = null;
+            document.getElementById('auth-password').value = '';
+            
+            const authLayer = document.getElementById('auth-layer');
+            authLayer.classList.remove('hidden');
+            setTimeout(() => { authLayer.style.opacity = '1'; }, 10);
+        };
+
+        // --- Render the Dynamic App Grid ---
+        document.getElementById('app-search').addEventListener('input', (e) => {
+            window.state.searchQuery = e.target.value.toLowerCase();
+            renderApps();
+        });
+
+        function renderApps() {
+            if (!window.state.currentUser) return;
+
+            const container = document.getElementById('apps-container');
+            const noAppsMsg = document.getElementById('no-apps-message');
+            container.innerHTML = '';
+
+            // Filter apps by assigned role and search query
+            const visibleApps = applications.filter(app => {
+                const hasRoleAccess = app.allowedRoles.includes(window.state.currentUser.role) || window.state.currentUser.role === 'admin';
+                const matchesSearch = app.name.toLowerCase().includes(window.state.searchQuery) || app.description.toLowerCase().includes(window.state.searchQuery);
+                return hasRoleAccess && matchesSearch;
+            });
+
+            if (visibleApps.length === 0) {
+                noAppsMsg.classList.remove('hidden');
+            } else {
+                noAppsMsg.classList.add('hidden');
+                
+                visibleApps.forEach(app => {
+                    const card = document.createElement('a');
+                    card.href = app.url;
+                    card.className = "app-card bg-white rounded-lg border border-gray-200 p-6 flex flex-col justify-between hover:border-black cursor-pointer shadow-sm hover:shadow-md group block";
+                    
+                    card.innerHTML = `
+                        <div>
+                            <div class="h-10 w-10 rounded-md bg-gray-50 border border-gray-200 flex items-center justify-center mb-4 group-hover:bg-black group-hover:border-black transition-colors">
+                                <i class="ph-bold ${app.icon} text-xl text-black group-hover:text-white transition-colors"></i>
+                            </div>
+                            <h3 class="text-lg font-bold text-black">${app.name}</h3>
+                            <p class="text-xs text-gray-500 mt-2 leading-relaxed">${app.description}</p>
+                        </div>
+                        <div class="mt-6 border-t border-gray-100 pt-4 flex items-center justify-between">
+                            <span class="text-[10px] font-bold text-gray-400 uppercase tracking-wider group-hover:text-black transition-colors">Launch App</span>
+                            <i class="ph-bold ph-arrow-right text-gray-400 group-hover:text-black transition-colors"></i>
+                        </div>
+                    `;
+                    container.appendChild(card);
+                });
+            }
+        }
+    </script>
+</body>
+</html>
