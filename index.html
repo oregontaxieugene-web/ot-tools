@@ -135,9 +135,10 @@
         import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
 
         // ⚠️ UPDATE THESE 3 VARIABLES WITH YOUR ACTUAL URLS AND KEYS
-        const SUPABASE_URL = 'https://ioofrqvykvgshqybzjiu.supabase.co';
-        const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imlvb2ZycXZ5a3Znc2hxeWJ6aml1Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3NDk2NzE3NywiZXhwIjoyMDkwNTQzMTc3fQ.Rez8dtNIQWXUsyPZ3L93_-hitgbEbjw-RmCUZGEjPVQ';
-        const CLOUDFLARE_WORKER_URL = 'https://ot-tools.oregontaxieugene.workers.dev';
+        const SUPABASE_URL = 'YOUR_SUPABASE_URL';
+        const SUPABASE_ANON_KEY = 'YOUR_SUPABASE_ANON_KEY';
+        const CLOUDFLARE_WORKER_URL = 'YOUR_CLOUDFLARE_WORKER_URL'; // e.g., https://icabbi-webhook.yourname.workers.dev
+
         const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
         const applications = [
@@ -261,9 +262,7 @@
                         body: JSON.stringify({ email, password, name })
                     });
                     
-                    const rawText = await res.text();
-console.log("Server responded with:", rawText);
-const result = JSON.parse(rawText);
+                    const result = await res.json();
                     
                     if (!res.ok) throw new Error(result.error || 'Registration failed');
 
