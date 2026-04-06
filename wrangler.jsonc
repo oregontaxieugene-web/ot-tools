@@ -10,5 +10,9 @@
   },
   "compatibility_flags": [
     "nodejs_compat"
+  ],
+ "routes": [
+    { "pattern": "ot-tools.com", "custom_domain": true },
+    { "pattern": "www.ot-tools.com", "custom_domain": true }
   ]
 }
