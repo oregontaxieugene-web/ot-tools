@@ -7,7 +7,7 @@
     
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/@phosphor-icons/web"></script>
-
+   <script src="/config.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 
     <style>
@@ -131,13 +131,15 @@
         </main>
     </div>
 
+
     <script type="module">
         import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
 
-        // ⚠️ UPDATE THESE 3 VARIABLES WITH YOUR ACTUAL URLS AND KEYS
-        const SUPABASE_URL = 'YOUR_SUPABASE_URL';
-        const SUPABASE_ANON_KEY = 'YOUR_SUPABASE_ANON_KEY';
-        const CLOUDFLARE_WORKER_URL = 'YOUR_CLOUDFLARE_WORKER_URL'; // e.g., https://icabbi-webhook.yourname.workers.dev
+    // Read from the gitignored config file instead of hardcoding
+    const SUPABASE_URL = window.ENV.SUPABASE_URL;
+    const SUPABASE_ANON_KEY = window.ENV.SUPABASE_ANON_KEY;
+    const CLOUDFLARE_WORKER_URL = window.ENV.CLOUDFLARE_WORKER_URL;
+
 
         const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
@@ -147,7 +149,7 @@
                 name: 'SMS Tool',
                 description: 'Our texting tool for communication with deluxe and direct medical drivers.',
                 icon: 'ph-chat-circle-text',
-                url: '/smstool',
+                url: '/sms.html',
                 allowedRoles: ['admin', 'dispatcher', 'driver']
             },
             {
@@ -155,7 +157,7 @@
                 name: 'Account Balances',
                 description: 'View balances and accounts.',
                 icon: 'ph-wallet',
-                url: '/accountsbalances',
+                url: '/balances.html',
                 allowedRoles: ['admin', 'finance', 'dispatcher']
             },
             {
@@ -171,7 +173,7 @@
                 name: 'Repair Tracker',
                 description: 'For our shop to track and monitor vehicle maintenance and repairs.',
                 icon: 'ph-wrench',
-                url: '/repairtracker',
+                url: '/repair-tracker.html',
                 allowedRoles: ['admin', 'shop', 'maintenance', 'dispatcher']
             }
         ];
